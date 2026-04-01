@@ -282,6 +282,26 @@ docker-build: set-image test $(TOOLBIN)/kustomize ## Build the docker image for 
 docker-push: ## Push the docker image
 	docker push $(CONTROLLER_IMG)
 
+## --------------------------------------
+## ko
+## --------------------------------------
+
+KO_DOCKER_REPO ?= ghcr.io/den-vasyliev/application
+
+.PHONY: ko-image
+ko-image: ## Build container image locally using ko
+	KO_DOCKER_REPO=ko.local ko build \
+		--oci-layout-path=bin/images/kube-app-manager \
+		.
+
+.PHONY: ko-push
+ko-push: ## Build and push container image using ko
+	KO_DOCKER_REPO=$(KO_DOCKER_REPO) ko build \
+		--tags=$(VER),latest \
+		--bare \
+		--image-label org.opencontainers.image.version=$(VER) \
+		.
+
 .PHONY: clean
 clean:
 	go clean --cache
