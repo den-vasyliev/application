@@ -1,5 +1,5 @@
 export app_major=1
-export app_minor=0
+export app_minor=1
 export app_patch=0
 
 
