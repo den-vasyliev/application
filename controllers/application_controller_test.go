@@ -10,16 +10,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apps "k8s.io/api/apps/v1"
 	core "k8s.io/api/core/v1"
-	policy "k8s.io/api/policy/v1beta1"
+	policy "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -35,7 +34,7 @@ var c client.Client
 const timeout = time.Second * 30
 
 var _ = Describe("Application Reconciler", func() {
-	var stopMgr chan struct{}
+	var stopMgr context.CancelFunc
 	var mgrStopped *sync.WaitGroup
 	var recFn reconcile.Reconciler
 	var requests chan reconcile.Request
@@ -57,8 +56,7 @@ var _ = Describe("Application Reconciler", func() {
 		c = mgr.GetClient()
 
 		applicationReconciler = NewReconciler(mgr)
-		logger := applicationReconciler.Log.WithValues("application", metav1.NamespaceDefault+"/application")
-		ctx = context.WithValue(context.Background(), loggerCtxKey, logger)
+		ctx = context.Background()
 		recFn, requests = SetupTestReconcile(applicationReconciler)
 		Expect(CreateController("app", mgr, recFn)).NotTo(HaveOccurred())
 
@@ -66,13 +64,13 @@ var _ = Describe("Application Reconciler", func() {
 	})
 
 	AfterEach(func() {
-		close(stopMgr)
+		stopMgr()
 		mgrStopped.Wait()
 	})
 
 	Describe("fetchComponentListResources", func() {
 		It("should fetch corresponding components with matched labels within a namespace", func() {
-			var objs []runtime.Object = nil
+			var objs []client.Object
 			createNamespace(namespace2, ctx)
 			deployment = createDeployment(labelSet1, namespace1)
 			service = createService(labelSet1, namespace1)
@@ -297,7 +295,7 @@ var _ = Describe("Application Reconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 			waitForComponentsAddedToStatus(ctx, application, deployment.Name, service.Name)
 
-			_ = wait.PollImmediate(time.Second, timeout, func() (bool, error) {
+			_ = wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 				fetchUpdatedDeployment(ctx, deployment)
 				fetchUpdatedService(ctx, service)
 				if len(deployment.OwnerReferences) == 1 && len(service.OwnerReferences) == 1 {
@@ -337,7 +335,7 @@ func waitForComponentsAddedToStatus(ctx context.Context, app *appv1beta1.Applica
 		Name:      app.Name,
 		Namespace: app.Namespace,
 	}
-	_ = wait.PollImmediate(time.Second, timeout, func() (bool, error) {
+	_ = wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		names, err := applicationStatusComponentNames(ctx, app, key)
 		if err != nil {
 			return false, err
@@ -465,7 +463,7 @@ func CreatePersistentVolumeClaim(labels map[string]string, ns string) *core.Pers
 				core.ReadWriteOnce,
 				core.ReadOnlyMany,
 			},
-			Resources: core.ResourceRequirements{
+			Resources: core.VolumeResourceRequirements{
 				Requests: core.ResourceList{
 					core.ResourceStorage: resource.MustParse("10G"),
 				},
@@ -497,14 +495,13 @@ func createPodDisruptionBudget(labels map[string]string, ns string) *policy.PodD
 }
 
 func createService(labels map[string]string, ns string) *core.Service {
-	serviceIPFamily := core.IPv4Protocol
 	return &core.Service{
 		ObjectMeta: objectMeta("service", labels, ns),
 		Spec: core.ServiceSpec{
 			SessionAffinity: "None",
 			Type:            core.ServiceTypeClusterIP,
-			Ports:           []core.ServicePort{{Name: "p", Protocol: "TCP", Port: 8675, TargetPort: intstr.FromInt(8675)}},
-			IPFamily:        &serviceIPFamily,
+			Ports:           []core.ServicePort{{Name: "p", Protocol: "TCP", Port: 8675, TargetPort: intstr.FromInt32(8675)}},
+			IPFamilies:      []core.IPFamily{core.IPv4Protocol},
 		},
 	}
 }

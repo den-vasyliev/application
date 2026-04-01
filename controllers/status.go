@@ -9,7 +9,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	policyv1beta1 "k8s.io/api/policy/v1beta1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -45,6 +45,8 @@ func status(u *unstructured.Unstructured) (string, error) {
 		return replicationControllerStatus(u)
 	case "Job.batch":
 		return jobStatus(u)
+	case "Rollout.argoproj.io":
+		return rolloutStatus(u)
 	default:
 		return statusFromStandardConditions(u)
 	}
@@ -218,7 +220,7 @@ func podStatus(u *unstructured.Unstructured) (string, error) {
 
 // PodDisruptionBudget
 func pdbStatus(u *unstructured.Unstructured) (string, error) {
-	pdb := &policyv1beta1.PodDisruptionBudget{}
+	pdb := &policyv1.PodDisruptionBudget{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, pdb); err != nil {
 		return StatusUnknown, err
 	}
@@ -257,6 +259,27 @@ func jobStatus(u *unstructured.Unstructured) (string, error) {
 	}
 
 	return StatusReady, nil
+}
+
+// Argo Rollout — uses status.phase rather than standard conditions
+func rolloutStatus(u *unstructured.Unstructured) (string, error) {
+	phase, found, err := unstructured.NestedString(u.Object, "status", "phase")
+	if err != nil {
+		return StatusUnknown, err
+	}
+	if !found || phase == "" {
+		return StatusInProgress, nil
+	}
+	switch phase {
+	case "Healthy":
+		return StatusReady, nil
+	case "Degraded":
+		return StatusInProgress, nil
+	case "Paused":
+		return StatusInProgress, nil
+	default:
+		return StatusUnknown, nil
+	}
 }
 
 func hasEmptyIngressIP(ingress []corev1.LoadBalancerIngress) bool {

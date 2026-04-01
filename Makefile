@@ -103,26 +103,13 @@ test: $(TOOLBIN)/etcd $(TOOLBIN)/kube-apiserver $(TOOLBIN)/kubectl
 	TEST_ASSET_ETCD=$(TOOLBIN)/etcd \
 	go test -v ./api/... ./controllers/... -coverprofile $(COVER_FILE)
 
-# Run e2e-tests
-K8S_VERSION := "v1.18.2"
-
-.PHONY: e2e-setup
-e2e-setup: $(TOOLBIN)/kind
-	$(TOOLBIN)/kind create cluster \
-	 -v 4 --retain --wait=1m \
-	 --config e2e/kind-config.yaml \
-	 --image=kindest/node:$(K8S_VERSION)
-
-.PHONY: e2e-cleanup
-e2e-cleanup: $(TOOLBIN)/kind
-	$(TOOLBIN)/kind delete cluster
-
+# Run e2e-tests (envtest-based, no cluster required)
 .PHONY: e2e-test
-e2e-test: generate fmt vet $(TOOLBIN)/kind $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl
-	go test -v ./e2e/main_test.go
-
-.PHONY: local-e2e-test
-local-e2e-test: e2e-setup e2e-test e2e-cleanup
+e2e-test: generate fmt vet $(TOOLBIN)/etcd $(TOOLBIN)/kube-apiserver $(TOOLBIN)/kubectl
+	TEST_ASSET_KUBECTL=$(TOOLBIN)/kubectl \
+	TEST_ASSET_KUBE_APISERVER=$(TOOLBIN)/kube-apiserver \
+	TEST_ASSET_ETCD=$(TOOLBIN)/etcd \
+	go test -v ./e2e/...
 
 ## --------------------------------------
 ## Build and run

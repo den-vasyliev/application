@@ -10,11 +10,13 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	appv1beta1 "sigs.k8s.io/application/api/v1beta1"
 	"sigs.k8s.io/application/controllers"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -42,18 +44,21 @@ func main() {
 		"Enable leader election for controller kube-app-manager. Enabling this will ensure there is only one active controller kube-app-manager.")
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(func(o *zap.Options) {
-		o.Development = true
-	}))
+	opts := zap.Options{Development: true}
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	syncPeriodD := time.Duration(int64(time.Second) * syncPeriod)
+	cacheOpts := cache.Options{SyncPeriod: &syncPeriodD}
+	if namespace != "" {
+		cacheOpts.DefaultNamespaces = map[string]cache.Config{namespace: {}}
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:             scheme,
-		MetricsBindAddress: metricsAddr,
-		LeaderElection:     enableLeaderElection,
-		Port:               9443,
-		SyncPeriod:         &syncPeriodD,
-		Namespace:          namespace,
+		Scheme:           scheme,
+		Metrics:          metricsserver.Options{BindAddress: metricsAddr},
+		LeaderElection:   enableLeaderElection,
+		LeaderElectionID: "kube-app-manager",
+		Cache:            cacheOpts,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start kube-app-manager")
@@ -63,7 +68,6 @@ func main() {
 	if err = (&controllers.ApplicationReconciler{
 		Client: mgr.GetClient(),
 		Mapper: mgr.GetRESTMapper(),
-		Log:    ctrl.Log.WithName("controllers").WithName("Application"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Application")
