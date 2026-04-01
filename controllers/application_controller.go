@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -20,19 +19,15 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	appv1beta1 "sigs.k8s.io/application/api/v1beta1"
-)
-
-const (
-	loggerCtxKey = "logger"
 )
 
 // ApplicationReconciler reconciles a Application object
 type ApplicationReconciler struct {
 	client.Client
 	Mapper meta.RESTMapper
-	Log    logr.Logger
 	Scheme *runtime.Scheme
 }
 
@@ -40,10 +35,9 @@ type ApplicationReconciler struct {
 // +kubebuilder:rbac:groups=app.k8s.io,resources=applications/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=*,resources=*,verbs=list;get;update;patch;watch
 
-func (r *ApplicationReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	rootCtx := context.Background()
-	logger := r.Log.WithValues("application", req.NamespacedName)
-	ctx := context.WithValue(rootCtx, loggerCtxKey, logger)
+func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithValues("application", req.NamespacedName)
+	ctx = log.IntoContext(ctx, logger)
 
 	var app appv1beta1.Application
 	err := r.Get(ctx, req.NamespacedName, &app)
@@ -114,7 +108,7 @@ func (r *ApplicationReconciler) getNewApplicationStatus(ctx context.Context, app
 }
 
 func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context, groupKinds []metav1.GroupKind, selector *metav1.LabelSelector, namespace string, errs *[]error) []*unstructured.Unstructured {
-	logger := getLoggerOrDie(ctx)
+	logger := log.FromContext(ctx)
 	var resources []*unstructured.Unstructured
 
 	if selector == nil {
@@ -149,7 +143,7 @@ func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context,
 }
 
 func (r *ApplicationReconciler) setOwnerRefForResources(ctx context.Context, ownerRef metav1.OwnerReference, resources []*unstructured.Unstructured) error {
-	logger := getLoggerOrDie(ctx)
+	logger := log.FromContext(ctx)
 	for _, resource := range resources {
 		ownerRefs := resource.GetOwnerReferences()
 		ownerRefFound := false
@@ -179,7 +173,7 @@ func (r *ApplicationReconciler) setOwnerRefForResources(ctx context.Context, own
 }
 
 func (r *ApplicationReconciler) objectStatuses(ctx context.Context, resources []*unstructured.Unstructured, errs *[]error) []appv1beta1.ObjectStatus {
-	logger := getLoggerOrDie(ctx)
+	logger := log.FromContext(ctx)
 	var objectStatuses []appv1beta1.ObjectStatus
 	for _, resource := range resources {
 		os := appv1beta1.ObjectStatus{
@@ -234,12 +228,4 @@ func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&appv1beta1.Application{}).
 		Complete(r)
-}
-
-func getLoggerOrDie(ctx context.Context) logr.Logger {
-	logger, ok := ctx.Value(loggerCtxKey).(logr.Logger)
-	if !ok {
-		panic("context didn't contain logger")
-	}
-	return logger
 }
