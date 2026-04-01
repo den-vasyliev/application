@@ -1,38 +1,27 @@
 # Copyright 2020 The Kubernetes Authors.
 # SPDX-License-Identifier: Apache-2.0
 
-
-# Build the manager binary
-FROM golang:1.13 as builder
-# Copy in the go src
+FROM golang:1.24 AS builder
 WORKDIR /workspace
 
-# Run this with docker build --build_arg $(go env GOPROXY) to override the goproxy
 ARG goproxy=https://proxy.golang.org
 ENV GOPROXY=$goproxy
 
-# Copy the Go Modules manifests
-COPY go.mod go.mod
-COPY go.sum go.sum
-# Cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
+COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the go source
 COPY main.go main.go
 COPY api/ api/
 COPY controllers/ controllers/
 
-# Build
-ARG ARCH
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} GO111MODULE=on \
-    go build -a -ldflags '-extldflags "-static"' \
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -a -ldflags '-extldflags "-static" -s -w' \
     -o kube-app-manager main.go
 
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:latest
+FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/kube-app-manager .
-USER nobody
+USER nonroot:nonroot
 ENTRYPOINT ["/kube-app-manager"]
