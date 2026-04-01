@@ -273,9 +273,7 @@ func rolloutStatus(u *unstructured.Unstructured) (string, error) {
 	switch phase {
 	case "Healthy":
 		return StatusReady, nil
-	case "Degraded":
-		return StatusInProgress, nil
-	case "Paused":
+	case "Degraded", "Progressing", "Paused", "Error", "Unknown":
 		return StatusInProgress, nil
 	default:
 		return StatusUnknown, nil
