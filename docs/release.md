@@ -18,7 +18,7 @@ Both targets:
 1. Update `VERSION` (increments `app_patch` or `app_minor`, resets patch to 0 for minor)
 2. Commit: `release: bump patch to vX.Y.Z`
 3. Tag: `vX.Y.Z`
-4. Push commit and tag to `origin master`
+4. Push commit and tag to `origin main`
 
 CI then builds and pushes the multi-arch image (`linux/amd64`, `linux/arm64`) to:
 ```

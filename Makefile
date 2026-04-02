@@ -339,7 +339,7 @@ _bump-patch:
 	git add VERSION; \
 	git commit -m "release: bump patch to v$(app_major).$(app_minor).$$NEW"; \
 	git tag v$(app_major).$(app_minor).$$NEW; \
-	git push origin master; \
+	git push origin main; \
 	git push origin v$(app_major).$(app_minor).$$NEW
 
 .PHONY: bump-minor
@@ -357,7 +357,7 @@ _bump-minor:
 	git add VERSION; \
 	git commit -m "release: bump minor to v$(app_major).$$NEW.0"; \
 	git tag v$(app_major).$$NEW.0; \
-	git push origin master; \
+	git push origin main; \
 	git push origin v$(app_major).$$NEW.0
 
 ## --------------------------------------
@@ -371,8 +371,8 @@ release-branch:
 .PHONY: create-release-branch
 create-release-branch:
 	git fetch upstream
-	git checkout master
-	git rebase upstream/master
+	git checkout main
+	git rebase upstream/main
 	git branch -D $(RELEASE_BRANCH) || true
 	git checkout -b $(RELEASE_BRANCH)
 	git push -f $(RELEASE_REMOTE) $(RELEASE_BRANCH)
