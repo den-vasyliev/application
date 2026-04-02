@@ -36,9 +36,7 @@ spec:
         controller-tools.k8s.io: "1.0"
     spec:
       containers:
-      - command:
-        - /kube-app-manager
-        args:
+      - args:
         - --enable-leader-election
         image: kube-app-manager:dev
         imagePullPolicy: IfNotPresent
