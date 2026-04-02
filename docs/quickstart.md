@@ -1,62 +1,57 @@
 # Quick Start
-Clone
-```bash
-mkdir -p $GOPATH/src/sigs.k8s.io
-cd $GOPATH/src/sigs.k8s.io
 
-# clone
-git clone git@github.com:kubernetes-sigs/application.git
+## Deploy to cluster
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/den-vasyliev/application/master/deploy/kube-app-manager-aio.yaml
 ```
 
-Deploy to cluster
+Verify:
 ```bash
-# deploy to cluster
-make deploy
+kubectl get pods -n application-system
+kubectl get crd applications.app.k8s.io
+```
 
-# un-deploy from cluster
-make undeploy
+## Example Application
+
+```bash
+kubectl apply -f docs/examples/wordpress/
+kubectl get application wordpress-01
 ```
 
 # Dev Quick Start
 
-Fork and clone
-```bash
-mkdir -p $GOPATH/src/sigs.k8s.io
-cd $GOPATH/src/sigs.k8s.io
+## Clone
 
-# fork https://github.com/kubernetes-sigs/application
-# clone
-GITHUBID=<githubid>
-git clone git@github.com:${GITHUBID}/application.git $GOPATH/src/sigs.k8s.io/application
+```bash
+git clone https://github.com/den-vasyliev/application.git
+cd application
 ```
 
-Run locally
+## Run tests (no cluster required)
+
 ```bash
-# create local cluster
-make e2e-setup
-
-# install CRD
-make deploy-crd
-
-# run locally
-make run
-
-# tear down
-make e2e-cleanup
+make test        # unit tests
+make e2e-test    # e2e tests
 ```
 
-Run against cluster
+## Build binary
+
 ```bash
-# The default image is `gcr.io/$(shell gcloud config get-value project)/kube-app-manager`
-# to use different image edit VERSION-DEV file
+make bin/kube-app-manager
+./bin/kube-app-manager --help
+```
 
-# build docker image
-make docker-build
-make docker-push
+## Build and push image
 
-# deploy to cluster. This generates the manifests and deploys
-make deploy-dev
+```bash
+export KO_DOCKER_REPO=ghcr.io/<your-org>/application
+make ko-push
+```
 
-# deploy example
-make deploy-wordpress
+## Deploy to cluster
+
+```bash
+make deploy CONTROLLER_IMG=<image>
+make undeploy
 ```

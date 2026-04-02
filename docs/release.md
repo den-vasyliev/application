@@ -1,73 +1,27 @@
 # Releasing
 
-[semver]: https://semver.org
-[`VERSION`]: ../VERSION
-[`VERSION-DEV`]: ../VERSION-DEV
+Releases are managed via `make bump-patch` and `make bump-minor`. Each target updates the `VERSION` file, commits, creates a git tag, and pushes to origin.
 
-This document describes how to perform a [semver] release.
+## Bump patch (e.g. v1.1.8 → v1.1.9)
 
-## Release artifacts
-1. Branch `release-vMajor.Minor` for each `Major.Minor.*` version. Example `release-v0.8`
-2. Tag `vMajor.Minor.Patch` for each `Major.Minor.Patch` version. Example `v0.8.1`
-3. All in one deployment yaml for the Application controller
-4. Container image for the Application controller
-
-## Release roles
-
-Only Repo Owners can create branches in the [Application Repo](https://github.com/kubernetes-sigs/application). Developers who fork the repo can create releases in their repo as well.
-
-#### Version files
-For official releases [`VERSION`] file is used.
-For developers [`VERSION-DEV`] file is used.
-
-The default file used is [`VERSION-DEV`].
-To use [`VERSION`], set the `VERSION_FILE` env variable.
-
-Developers should edit the [`VERSION-DEV`] file to set their choice of container registry and version.
-
-## Release procedure
-
-#### Create release branch
-
-Release are always cut from the `master` branch `HEAD`. 
-Ensure that all necessary fixes are merged, documentation updated and most importantly the [`VERSION`] file is updated.
-The steps to create a release branch are:
 ```bash
-
-# Repo owners use this for official releases:
-VERSION_FILE=VERSION make release-branch
-
-# Developers use this for their fork
-make release-branch
+make bump-patch
 ```
 
-#### Create release tag
+## Bump minor (e.g. v1.1.x → v1.2.0)
 
-Patch releases are created from the patch branch. 
-Ensure that all necessary fixes are merged, documentation updated and most importantly the `patch` version is updated in the [`VERSION`] file.
-The steps to create a release tag are:
 ```bash
-
-# Repo owners use this for official releases:
-VERSION_FILE=VERSION make release-tag
-
-# Developers use this for their fork
-make release-tag
+make bump-minor
 ```
 
-#### Deleting release tag
+Both targets:
+1. Update `VERSION` (increments `app_patch` or `app_minor`, resets patch to 0 for minor)
+2. Commit: `release: bump patch to vX.Y.Z`
+3. Tag: `vX.Y.Z`
+4. Push commit and tag to `origin master`
 
-The steps to delete a release tag are:
-```bash
-
-# Repo owners use this for official releases:
-VERSION_FILE=VERSION make delete-release-tag
-
-# Developers use this for their fork
-make delete-release-tag
+CI then builds and pushes the multi-arch image (`linux/amd64`, `linux/arm64`) to:
 ```
-
-### TODO
-- Release notes
-- Generate changes between releases
-
+ghcr.io/den-vasyliev/application:<tag>
+ghcr.io/den-vasyliev/application:latest  # on default branch
+```

@@ -2,169 +2,71 @@
 
 ## Prerequisites
 
-### Tools
-- make
-- [go](https://golang.org/dl/) version v1.13+.
-- [docker](https://docs.docker.com/install/) version 17.03+.
+- [Go](https://golang.org/dl/) v1.24+
+- [ko](https://ko.build) — container image builds
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) + cluster access (optional, for deploy targets)
 
-### Other tools
-This repo uses other tools for development, building and testing.
-These tools are installed with `make install-tools`:
-- controller-gen
-- golangci-lint
-- mockgen
-- conversion-gen
-- kubebuilder
-- [kustomize](https://github.com/kubernetes-sigs/kustomize)
-- addlicense
-- misspell
-- [kind](https://github.com/kubernetes-sigs/kind)
+Install build tools:
+```bash
+make install-tools
+```
 
-### Cluster
-- Access to a Kubernetes v1.11.3+ cluster.
+## Workflow
 
-## Development
-
-### Fork and Clone
-
-Fork [Application Repo](https://github.com/kubernetes-sigs/application).
-Then clone your fork locally.
+### Build
 
 ```bash
-mkdir -p $GOPATH/src/sigs.k8s.io
-cd $GOPATH/src/sigs.k8s.io
-
-GITHUBID=<githubid>
-git clone git@github.com:${GITHUBID}/application.git $GOPATH/src/sigs.k8s.io/application
+make bin/kube-app-manager    # binary
+make ko-image                # OCI image (local layout, no push)
+make ko-push                 # build and push to $KO_DOCKER_REPO
 ```
 
-### Cluster access
-For running e2e tests and development testing you need access to a cluster. You could create a cluster with your cloud provider and ensure the `kubeconfig` points to the cluster.
-
-##### Local cluster
-For local testing you could create a `kind`.
+### Test (no cluster required — uses envtest)
 
 ```bash
-# this created a kind cluster and updates kubeconfig to point to it
-make e2e-setup
+make test        # unit tests
+make e2e-test    # e2e tests
 ```
-### Building the controller binary
+
+Run a single test with Ginkgo focus:
+```bash
+go test -v ./controllers/... -run "TestAPIs" --ginkgo.focus="<test name>"
+```
+
+### Code quality
 
 ```bash
-# make or make all will build
-make
-
-# individual run make targets
-#
-# generate code
-make generate
-
-# create manifests
-make manifests
-
-# Inject license header to all generated files
-make license
-
-# building the kube-app-manager
-make bin/kube-app-manager
+make fmt         # go fmt
+make vet         # go vet
+make lint        # golangci-lint
 ```
 
-### Running tests
-After making changes use these targets to test locally.
+### Manifests / codegen
 
-##### unit tests
 ```bash
-# running unitests
-make test
+make manifests   # regenerate CRD/RBAC manifests (controller-gen)
+make generate    # regenerate deepcopy methods
 ```
 
-##### e2e tests
+## Deploy to cluster
+
 ```bash
-# running e2e tests
-
-# If your kubeconfig points to your test cluster skip this step
-# This will create a kind cluster for testing
-make e2e-setup
-
-# run e2e tests
-make e2e-test
-
-# Tear down kind cluster
-make e2e-cleanup
-```
-
-### Building controller docker
-To build the controller into an image named `image` use the following command.
-
-NOTE:
-`CONTROLLER_IMG` is optional. The default value is `gcr.io/$(shell gcloud config get-value project)/kube-app-manager`
-
-```commandline
-make docker-build CONTROLLER_IMG=<image>
-```
-
-To push the controller image, run:
-```commandline
-make docker-push CONTROLLER_IMG=<image>
-```
-
-### Installing CRD in the cluster
-Once kubeconfig is setup with a cluster.
-```bash
-make install
-```
-### Deploying the controller in cluster
-
-- This will install the controller into the application-system namespace and with the default RBAC permissions.
-- It will also install the Application CRD.
-- Ensure the docker image is built and pushed first.
-
-```commandline
 make deploy CONTROLLER_IMG=<image>
+make undeploy
 ```
 
 ## Using the Application CRD
 
-The application CRD can be used both via manifests and programmatically.
+See [api.md](api.md) for field reference and [examples/wordpress](examples/wordpress) for a working example.
 
-### Manifests
+### Programmatic access
 
-The docs directory contains an example [manifest](docs/examples/wordpress/application.yaml) that shows how to you can integrate the Application CRD with a [WordPress deployment](docs/examples/wordpress).
-
-The Application object uses StatefulSets and Services. It also contains some other relevant metadata describing wordpress application. Notice that each Service and StatefulSet is labeled such that Application's Selector matches the labels. The additional labels on the Applications components come from the recommended application labels and annotations.
-
-```bash
-# Deploying the example
-
-make deploy-wordpress
-kubectl get application
-
-# cleanup
-make undeploy-wordpress
-```
-### Programmatically
-
-Kubebuilder provides a client to get, create, update and delete resources and this also works for application resources. This is documented in the kubebuilder book: https://book.kubebuilder.io/
-
-Create a client:
 ```go
-kubeClient, err := client.New(config)
-```
+kubeClient, err := client.New(config, client.Options{})
 
-Get an application resource:
-```go
 object := &applicationsv1beta1.Application{}
-objectKey := types.NamespacedName{
-    Namespace: "namespace",
-    Name: "name",
-}
-err = kubeClient.Get(context.TODO(), objectKey, object)
-```
-
-Create a new application resource:
-```go
-app := &applicationsv1beta1.Application{
-	...
-}
-err = kubeClient.Create(context.TODO(), app)
+err = kubeClient.Get(context.TODO(), types.NamespacedName{
+    Namespace: "default",
+    Name:      "my-app",
+}, object)
 ```
