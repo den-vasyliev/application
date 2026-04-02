@@ -57,7 +57,10 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	resources, errs := r.updateComponents(ctx, &app)
+	resources, errs, incomplete := r.updateComponents(ctx, &app)
+	if incomplete {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
 	newApplicationStatus := r.getNewApplicationStatus(ctx, &app, resources, &errs)
 
 	newApplicationStatus.ObservedGeneration = app.Generation
@@ -75,9 +78,9 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{}, err
 }
 
-func (r *ApplicationReconciler) updateComponents(ctx context.Context, app *appv1beta1.Application) ([]*unstructured.Unstructured, []error) {
+func (r *ApplicationReconciler) updateComponents(ctx context.Context, app *appv1beta1.Application) ([]*unstructured.Unstructured, []error, bool) {
 	var errs []error
-	resources := r.fetchComponentListResources(ctx, app.Spec.ComponentGroupKinds, app.Spec.Selector, app.Namespace, &errs)
+	resources, incomplete := r.fetchComponentListResources(ctx, app.Spec.ComponentGroupKinds, app.Spec.Selector, app.Namespace, &errs)
 
 	if app.Spec.AddOwnerRef {
 		ownerRef := metav1.NewControllerRef(app, appv1beta1.GroupVersion.WithKind("Application"))
@@ -86,7 +89,7 @@ func (r *ApplicationReconciler) updateComponents(ctx context.Context, app *appv1
 			errs = append(errs, err)
 		}
 	}
-	return resources, errs
+	return resources, errs, incomplete
 }
 
 func (r *ApplicationReconciler) getNewApplicationStatus(ctx context.Context, app *appv1beta1.Application, resources []*unstructured.Unstructured, errList *[]error) *appv1beta1.ApplicationStatus {
@@ -124,13 +127,14 @@ func (r *ApplicationReconciler) getNewApplicationStatus(ctx context.Context, app
 	return newApplicationStatus
 }
 
-func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context, groupKinds []metav1.GroupKind, selector *metav1.LabelSelector, namespace string, errs *[]error) []*unstructured.Unstructured {
+func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context, groupKinds []metav1.GroupKind, selector *metav1.LabelSelector, namespace string, errs *[]error) ([]*unstructured.Unstructured, bool) {
 	logger := log.FromContext(ctx)
 	var resources []*unstructured.Unstructured
+	incomplete := false
 
 	if selector == nil {
 		logger.Info("No selector is specified")
-		return resources
+		return resources, false
 	}
 
 	for _, gk := range groupKinds {
@@ -139,7 +143,8 @@ func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context,
 			Kind:  gk.Kind,
 		})
 		if err != nil {
-			logger.Info("NoMappingForGK", "gk", gk.String())
+			logger.Info("NoMappingForGK — requeueing", "gk", gk.String())
+			incomplete = true
 			continue
 		}
 
@@ -156,7 +161,7 @@ func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context,
 			resources = append(resources, &resource)
 		}
 	}
-	return resources
+	return resources, incomplete
 }
 
 func (r *ApplicationReconciler) setOwnerRefForResources(ctx context.Context, ownerRef metav1.OwnerReference, resources []*unstructured.Unstructured) error {
