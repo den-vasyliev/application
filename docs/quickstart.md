@@ -3,7 +3,7 @@
 ## Deploy to cluster
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/den-vasyliev/application/master/deploy/kube-app-manager-aio.yaml
+kubectl apply -f https://raw.githubusercontent.com/den-vasyliev/application/main/deploy/kube-app-manager-aio.yaml
 ```
 
 Verify:
