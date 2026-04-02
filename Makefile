@@ -323,6 +323,36 @@ clean:
 
 
 ## --------------------------------------
+## Version bumping
+## --------------------------------------
+
+.PHONY: bump-patch
+bump-patch: ## Bump patch version, commit, tag, and push
+	@NEW=$(shell echo $$(($(app_patch)+1))); \
+	awk -v old=$(app_patch) -v new=$$NEW \
+		'{gsub("export app_patch=" old, "export app_patch=" new)}1' \
+		VERSION > VERSION.tmp && mv VERSION.tmp VERSION; \
+	git add VERSION; \
+	git commit -m "release: bump patch to v$(app_major).$(app_minor).$$NEW"; \
+	git tag v$(app_major).$(app_minor).$$NEW; \
+	git push origin master; \
+	git push origin v$(app_major).$(app_minor).$$NEW
+
+.PHONY: bump-minor
+bump-minor: ## Bump minor version (reset patch to 0), commit, tag, and push
+	@NEW=$(shell echo $$(($(app_minor)+1))); \
+	awk -v om=$(app_minor) -v nm=$$NEW \
+		-v op=$(app_patch) \
+		'{gsub("export app_minor=" om, "export app_minor=" nm); \
+		  gsub("export app_patch=" op, "export app_patch=0")}1' \
+		VERSION > VERSION.tmp && mv VERSION.tmp VERSION; \
+	git add VERSION; \
+	git commit -m "release: bump minor to v$(app_major).$$NEW.0"; \
+	git tag v$(app_major).$$NEW.0; \
+	git push origin master; \
+	git push origin v$(app_major).$$NEW.0
+
+## --------------------------------------
 ## Releasing
 ## --------------------------------------
 .PHONY: release-branch
