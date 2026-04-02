@@ -6,6 +6,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/util/retry"
+	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -27,8 +29,9 @@ import (
 // ApplicationReconciler reconciles a Application object
 type ApplicationReconciler struct {
 	client.Client
-	Mapper meta.RESTMapper
-	Scheme *runtime.Scheme
+	Mapper              meta.RESTMapper
+	Scheme              *runtime.Scheme
+	StabilizationPeriod time.Duration
 }
 
 // +kubebuilder:rbac:groups=app.k8s.io,resources=applications,verbs=get;list;watch;create;update;patch;delete
@@ -59,6 +62,12 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	newApplicationStatus.ObservedGeneration = app.Generation
 	if equality.Semantic.DeepEqual(newApplicationStatus, &app.Status) {
 		return ctrl.Result{}, nil
+	}
+
+	// Stabilization: if transitioning from not-Ready to Ready, requeue to confirm
+	// the healthy state persists before writing — prevents flapping on brief recoveries.
+	if r.StabilizationPeriod > 0 && isTransitioningToReady(newApplicationStatus, &app.Status) {
+		return ctrl.Result{RequeueAfter: r.StabilizationPeriod}, nil
 	}
 
 	err = r.updateApplicationStatus(ctx, req.NamespacedName, newApplicationStatus)
@@ -192,6 +201,25 @@ func (r *ApplicationReconciler) objectStatuses(ctx context.Context, resources []
 		objectStatuses = append(objectStatuses, os)
 	}
 	return objectStatuses
+}
+
+func isTransitioningToReady(newStatus, curStatus *appv1beta1.ApplicationStatus) bool {
+	newReady := false
+	for _, c := range newStatus.Conditions {
+		if c.Type == appv1beta1.Ready && c.Status == corev1.ConditionTrue {
+			newReady = true
+			break
+		}
+	}
+	if !newReady {
+		return false
+	}
+	for _, c := range curStatus.Conditions {
+		if c.Type == appv1beta1.Ready && c.Status != corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
 
 func aggregateReady(objectStatuses []appv1beta1.ObjectStatus) (bool, int) {

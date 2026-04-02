@@ -36,10 +36,12 @@ func main() {
 	var namespace string
 	var metricsAddr string
 	var syncPeriod int64
+	var stabilizationPeriod int64
 	var enableLeaderElection bool
 	flag.StringVar(&namespace, "namespace", "", "Namespace within which CRD controller is running.")
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
 	flag.Int64Var(&syncPeriod, "sync-period", 120, "Sync every sync-period seconds.")
+	flag.Int64Var(&stabilizationPeriod, "stabilization-period", 30, "Seconds to wait before transitioning an Application to Ready, to avoid flapping.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller kube-app-manager. Enabling this will ensure there is only one active controller kube-app-manager.")
 	flag.Parse()
@@ -66,9 +68,10 @@ func main() {
 	}
 
 	if err = (&controllers.ApplicationReconciler{
-		Client: mgr.GetClient(),
-		Mapper: mgr.GetRESTMapper(),
-		Scheme: mgr.GetScheme(),
+		Client:              mgr.GetClient(),
+		Mapper:              mgr.GetRESTMapper(),
+		Scheme:              mgr.GetScheme(),
+		StabilizationPeriod: time.Duration(stabilizationPeriod) * time.Second,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Application")
 		os.Exit(1)
