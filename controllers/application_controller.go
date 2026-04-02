@@ -142,8 +142,7 @@ func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context,
 			Kind:  gk.Kind,
 		})
 		if err != nil {
-			logger.Error(err, "NoMappingForGK", "gk", gk.String())
-			*errs = append(*errs, fmt.Errorf("no mapping for GK %s: %w", gk.String(), err))
+			logger.Info("NoMappingForGK — skipping", "gk", gk.String(), "error", err)
 			continue
 		}
 

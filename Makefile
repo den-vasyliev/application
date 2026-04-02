@@ -328,6 +328,10 @@ clean:
 
 .PHONY: bump-patch
 bump-patch: ## Bump patch version, commit, tag, and push
+	$(MAKE) VERSION_FILE=VERSION _bump-patch
+
+.PHONY: _bump-patch
+_bump-patch:
 	@NEW=$(shell echo $$(($(app_patch)+1))); \
 	awk -v old=$(app_patch) -v new=$$NEW \
 		'{gsub("export app_patch=" old, "export app_patch=" new)}1' \
@@ -340,6 +344,10 @@ bump-patch: ## Bump patch version, commit, tag, and push
 
 .PHONY: bump-minor
 bump-minor: ## Bump minor version (reset patch to 0), commit, tag, and push
+	$(MAKE) VERSION_FILE=VERSION _bump-minor
+
+.PHONY: _bump-minor
+_bump-minor:
 	@NEW=$(shell echo $$(($(app_minor)+1))); \
 	awk -v om=$(app_minor) -v nm=$$NEW \
 		-v op=$(app_patch) \
