@@ -1,6 +1,6 @@
 export app_major=1
 export app_minor=1
-export app_patch=7
+export app_patch=8
 
 
 export REGISTRY=quay.io/kubernetes-sigs
