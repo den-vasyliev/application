@@ -93,19 +93,19 @@ func (r *ApplicationReconciler) getNewApplicationStatus(ctx context.Context, app
 	objectStatuses := r.objectStatuses(ctx, resources, errList)
 	errs := utilerrors.NewAggregate(*errList)
 
-	aggReady, countReady := aggregateReady(objectStatuses)
+	aggReady, countReady, totalWorkloads := aggregateReady(objectStatuses)
 
 	newApplicationStatus := app.Status.DeepCopy()
 	newApplicationStatus.ComponentList = appv1beta1.ComponentList{
 		Objects: objectStatuses,
 	}
-	newApplicationStatus.ComponentsReady = fmt.Sprintf("%d/%d", countReady, len(objectStatuses))
+	newApplicationStatus.ComponentsReady = fmt.Sprintf("%d/%d", countReady, totalWorkloads)
 	if errs != nil {
 		setReadyUnknownCondition(newApplicationStatus, "ComponentsReadyUnknown", "failed to aggregate all components' statuses, check the Error condition for details")
 	} else if aggReady {
 		setReadyCondition(newApplicationStatus, "ComponentsReady", "all components ready")
 	} else {
-		setNotReadyCondition(newApplicationStatus, "ComponentsNotReady", fmt.Sprintf("%d components not ready", len(objectStatuses)-countReady))
+		setNotReadyCondition(newApplicationStatus, "ComponentsNotReady", fmt.Sprintf("%d/%d workloads not ready", countReady, totalWorkloads))
 	}
 
 	if errs != nil {
@@ -209,6 +209,19 @@ func (r *ApplicationReconciler) objectStatuses(ctx context.Context, resources []
 	return objectStatuses
 }
 
+// workloadKinds are the resource kinds that determine Application readiness.
+// Infrastructure resources (Service, Ingress, etc.) are tracked in ComponentList
+// for visibility but do not affect the Ready condition.
+var workloadKinds = map[string]bool{
+	"Deployment":            true,
+	"StatefulSet":           true,
+	"DaemonSet":             true,
+	"ReplicaSet":            true,
+	"ReplicationController": true,
+	"Job":                   true,
+	"Rollout":               true,
+}
+
 func isTransitioningToReady(newStatus, curStatus *appv1beta1.ApplicationStatus) bool {
 	newReady := false
 	for _, c := range newStatus.Conditions {
@@ -228,17 +241,21 @@ func isTransitioningToReady(newStatus, curStatus *appv1beta1.ApplicationStatus) 
 	return false
 }
 
-func aggregateReady(objectStatuses []appv1beta1.ObjectStatus) (bool, int) {
-	countReady := 0
+func aggregateReady(objectStatuses []appv1beta1.ObjectStatus) (bool, int, int) {
+	total, countReady := 0, 0
 	for _, os := range objectStatuses {
+		if !workloadKinds[os.Kind] {
+			continue
+		}
+		total++
 		if os.Status == StatusReady {
 			countReady++
 		}
 	}
-	if countReady == len(objectStatuses) {
-		return true, countReady
+	if total == 0 {
+		return true, 0, 0
 	}
-	return false, countReady
+	return countReady == total, countReady, total
 }
 
 func (r *ApplicationReconciler) updateApplicationStatus(ctx context.Context, nn types.NamespacedName, status *appv1beta1.ApplicationStatus) error {
