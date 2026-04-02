@@ -129,29 +129,29 @@ var _ = Describe("Application Reconciler", func() {
 			}
 
 			var errs []error
-			ns1List := applicationReconciler.fetchComponentListResources(ctx, groupKinds, metav1.SetAsLabelSelector(labelSet1), namespace1, &errs)
+			ns1List, _ := applicationReconciler.fetchComponentListResources(ctx, groupKinds, metav1.SetAsLabelSelector(labelSet1), namespace1, &errs)
 			Expect(errs).To(BeNil())
 			Expect(len(ns1List)).To(Equal(3))
 			Expect(componentKinds(ns1List)).To(ConsistOf("StatefulSet", "Deployment", "Service"))
 
-			ns2l1List := applicationReconciler.fetchComponentListResources(ctx, groupKinds, metav1.SetAsLabelSelector(labelSet1), namespace2, &errs)
+			ns2l1List, _ := applicationReconciler.fetchComponentListResources(ctx, groupKinds, metav1.SetAsLabelSelector(labelSet1), namespace2, &errs)
 			Expect(errs).To(BeNil())
 			Expect(len(ns2l1List)).To(Equal(2))
 			Expect(componentKinds(ns2l1List)).To(ConsistOf("ReplicaSet", "DaemonSet"))
 
-			ns2l2List := applicationReconciler.fetchComponentListResources(ctx, groupKinds, metav1.SetAsLabelSelector(labelSet2), namespace2, &errs)
+			ns2l2List, _ := applicationReconciler.fetchComponentListResources(ctx, groupKinds, metav1.SetAsLabelSelector(labelSet2), namespace2, &errs)
 			Expect(errs).To(BeNil())
 			Expect(len(ns2l2List)).To(Equal(3))
 			Expect(componentKinds(ns2l2List)).To(ConsistOf("PersistentVolumeClaim", "Pod", "PodDisruptionBudget"))
 
 			// Empty selector will select ALL resources in the namespace
-			ns2AllList := applicationReconciler.fetchComponentListResources(ctx, groupKinds, metav1.SetAsLabelSelector(map[string]string{}), namespace2, &errs)
+			ns2AllList, _ := applicationReconciler.fetchComponentListResources(ctx, groupKinds, metav1.SetAsLabelSelector(map[string]string{}), namespace2, &errs)
 			Expect(errs).To(BeNil())
 			Expect(len(ns2AllList)).To(Equal(5))
 			Expect(componentKinds(ns2AllList)).To(ConsistOf("ReplicaSet", "DaemonSet", "PersistentVolumeClaim", "Pod", "PodDisruptionBudget"))
 
 			// No selector will select NO resources in the namespace
-			ns2NoList := applicationReconciler.fetchComponentListResources(ctx, groupKinds, nil, namespace2, &errs)
+			ns2NoList, _ := applicationReconciler.fetchComponentListResources(ctx, groupKinds, nil, namespace2, &errs)
 			Expect(errs).To(BeNil())
 			Expect(ns2NoList).To(BeNil())
 
@@ -170,7 +170,7 @@ var _ = Describe("Application Reconciler", func() {
 			}
 
 			var errs []error
-			ns1List := applicationReconciler.fetchComponentListResources(ctx, groupKinds, metav1.SetAsLabelSelector(labelSet1), metav1.NamespaceDefault, &errs)
+			ns1List, _ := applicationReconciler.fetchComponentListResources(ctx, groupKinds, metav1.SetAsLabelSelector(labelSet1), metav1.NamespaceDefault, &errs)
 			Expect(errs).To(BeNil())
 			Expect(len(ns1List)).To(Equal(2))
 			Expect(componentKinds(ns1List)).To(ConsistOf("Deployment", "Service"))
