@@ -571,6 +571,18 @@ rules:
   - update
   - patch
 - apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
   - ""
   resources:
   - events
@@ -756,8 +768,7 @@ spec:
           name: https
       - args:
         - --metrics-addr=127.0.0.1:8080
-        - --enable-leader-election
-        image: ghcr.io/den-vasyliev/application:1.1.0
+        image: ghcr.io/den-vasyliev/application:1.1.4
         imagePullPolicy: IfNotPresent
         name: kube-app-manager
         resources:
