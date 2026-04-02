@@ -93,19 +93,26 @@ func (r *ApplicationReconciler) getNewApplicationStatus(ctx context.Context, app
 	objectStatuses := r.objectStatuses(ctx, resources, errList)
 	errs := utilerrors.NewAggregate(*errList)
 
-	aggReady, countReady, totalWorkloads := aggregateReady(objectStatuses)
+	aggReady, countWorkloadsReady, totalWorkloads := aggregateReady(objectStatuses)
+
+	countAllReady := 0
+	for _, os := range objectStatuses {
+		if os.Status == StatusReady {
+			countAllReady++
+		}
+	}
 
 	newApplicationStatus := app.Status.DeepCopy()
 	newApplicationStatus.ComponentList = appv1beta1.ComponentList{
 		Objects: objectStatuses,
 	}
-	newApplicationStatus.ComponentsReady = fmt.Sprintf("%d/%d", countReady, totalWorkloads)
+	newApplicationStatus.ComponentsReady = fmt.Sprintf("%d/%d", countAllReady, len(objectStatuses))
 	if errs != nil {
 		setReadyUnknownCondition(newApplicationStatus, "ComponentsReadyUnknown", "failed to aggregate all components' statuses, check the Error condition for details")
 	} else if aggReady {
 		setReadyCondition(newApplicationStatus, "ComponentsReady", "all components ready")
 	} else {
-		setNotReadyCondition(newApplicationStatus, "ComponentsNotReady", fmt.Sprintf("%d/%d workloads not ready", countReady, totalWorkloads))
+		setNotReadyCondition(newApplicationStatus, "ComponentsNotReady", fmt.Sprintf("%d/%d workloads not ready", countWorkloadsReady, totalWorkloads))
 	}
 
 	if errs != nil {
