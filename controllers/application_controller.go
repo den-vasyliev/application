@@ -6,6 +6,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -200,6 +201,11 @@ func (r *ApplicationReconciler) objectStatuses(ctx context.Context, resources []
 		os.Status = s
 		objectStatuses = append(objectStatuses, os)
 	}
+	sort.Slice(objectStatuses, func(i, j int) bool {
+		ki := objectStatuses[i].Group + "/" + objectStatuses[i].Kind + "/" + objectStatuses[i].Name
+		kj := objectStatuses[j].Group + "/" + objectStatuses[j].Kind + "/" + objectStatuses[j].Name
+		return ki < kj
+	})
 	return objectStatuses
 }
 
