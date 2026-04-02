@@ -757,9 +757,7 @@ spec:
       - args:
         - --metrics-addr=127.0.0.1:8080
         - --enable-leader-election
-        command:
-        - /kube-app-manager
-        image: quay.io/kubernetes-sigs/kube-app-manager:v0.8.3
+        image: ghcr.io/den-vasyliev/application:1.1.0
         imagePullPolicy: IfNotPresent
         name: kube-app-manager
         resources:
