@@ -45,6 +45,8 @@ func status(u *unstructured.Unstructured) (string, error) {
 		return replicationControllerStatus(u)
 	case "Job.batch":
 		return jobStatus(u)
+	case "CronJob.batch":
+		return cronJobStatus(u)
 	case "Rollout.argoproj.io":
 		return rolloutStatus(u)
 	default:
@@ -254,7 +256,40 @@ func jobStatus(u *unstructured.Unstructured) (string, error) {
 		return StatusUnknown, err
 	}
 
-	if job.Status.StartTime == nil {
+	for _, condition := range job.Status.Conditions {
+		if condition.Status != corev1.ConditionTrue {
+			continue
+		}
+		switch condition.Type {
+		case batchv1.JobComplete:
+			return StatusReady, nil
+		case batchv1.JobFailed:
+			return StatusInProgress, nil
+		}
+	}
+
+	return StatusInProgress, nil
+}
+
+func cronJobStatus(u *unstructured.Unstructured) (string, error) {
+	cj := &batchv1.CronJob{}
+
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, cj); err != nil {
+		return StatusUnknown, err
+	}
+
+	if cj.Spec.Suspend != nil && *cj.Spec.Suspend {
+		return StatusInProgress, nil
+	}
+
+	// Never been scheduled yet — CronJob is configured and waiting
+	if cj.Status.LastScheduleTime == nil {
+		return StatusReady, nil
+	}
+
+	// Scheduled but no successful completion, or last schedule is more recent than last success
+	if cj.Status.LastSuccessfulTime == nil ||
+		cj.Status.LastScheduleTime.After(cj.Status.LastSuccessfulTime.Time) {
 		return StatusInProgress, nil
 	}
 
