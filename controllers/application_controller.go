@@ -229,6 +229,7 @@ var workloadKinds = map[string]bool{
 	"ReplicaSet":            true,
 	"ReplicationController": true,
 	"Job":                   true,
+	"CronJob":               true,
 	"Rollout":               true,
 }
 
