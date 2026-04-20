@@ -68,10 +68,16 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	// Stabilization: if transitioning from not-Ready to Ready, requeue to confirm
-	// the healthy state persists before writing — prevents flapping on brief recoveries.
+	// Stabilization: if transitioning from not-Ready to Ready, wait StabilizationPeriod
+	// to confirm the healthy state persists before writing — prevents flapping on brief recoveries.
+	// We use the lastTransitionTime of the current not-Ready condition as the start of the wait,
+	// so the requeue only fires once rather than looping indefinitely.
 	if r.StabilizationPeriod > 0 && isTransitioningToReady(newApplicationStatus, &app.Status) {
-		return ctrl.Result{RequeueAfter: r.StabilizationPeriod}, nil
+		notReadySince := notReadySince(&app.Status)
+		waited := time.Since(notReadySince)
+		if waited < r.StabilizationPeriod {
+			return ctrl.Result{RequeueAfter: r.StabilizationPeriod - waited}, nil
+		}
 	}
 
 	err = r.updateApplicationStatus(ctx, req.NamespacedName, newApplicationStatus)
@@ -250,6 +256,17 @@ func isTransitioningToReady(newStatus, curStatus *appv1beta1.ApplicationStatus) 
 		}
 	}
 	return false
+}
+
+// notReadySince returns the lastTransitionTime of the Ready=False condition,
+// or time.Now() if not found (so stabilization fires immediately for unknown state).
+func notReadySince(status *appv1beta1.ApplicationStatus) time.Time {
+	for _, c := range status.Conditions {
+		if c.Type == appv1beta1.Ready && c.Status != corev1.ConditionTrue {
+			return c.LastTransitionTime.Time
+		}
+	}
+	return time.Now()
 }
 
 func aggregateReady(objectStatuses []appv1beta1.ObjectStatus) (bool, int, int) {
