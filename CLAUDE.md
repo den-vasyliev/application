@@ -12,8 +12,8 @@ Repository: https://github.com/den-vasyliev/application (default branch: `main`)
 
 ```bash
 # Build
-make bin/kube-app-manager        # build binary
-make all                         # generate, fmt, vet, lint, test, build
+make bin/kube-app-manager        # build binary (just go build, no codegen)
+make all                         # fmt, vet, lint, test, build
 
 # Run locally against current kubeconfig
 ./bin/kube-app-manager
@@ -34,7 +34,7 @@ make vet                         # go vet
 
 # Code generation
 make manifests                   # regenerate CRD/RBAC/webhook manifests via controller-gen
-make generate                    # regenerate deepcopy methods
+make generate                    # run generate-go + manifests + generate-resources
 ```
 
 Test assets (etcd, kube-apiserver, kubectl) must be present at the paths set by `TEST_ASSET_ETCD`, `TEST_ASSET_KUBE_APISERVER`, `TEST_ASSET_KUBECTL` env vars (defaulting to `$(TOOLBIN)/`).
@@ -52,13 +52,12 @@ Test assets (etcd, kube-apiserver, kubectl) must be present at the paths set by 
 - `application_controller.go` — `ApplicationReconciler.Reconcile(ctx, req)` is the main loop:
   1. Fetch the `Application` resource
   2. Call `updateComponents()` to list all Kubernetes resources matching the Application's label selectors
-  3. Optionally set owner references on matched resources (`setOwnerRefForResources`)
-  4. Call `getNewApplicationStatus()` to aggregate component health into application-level conditions
-  5. Patch the `Application` status
+  3. Call `getNewApplicationStatus()` to aggregate component health into application-level conditions
+  4. Patch the `Application` status
 
 - `status.go` — `status()` dispatches per-resource readiness computation. Handled types:
   - Standard k8s: Deployment, StatefulSet, ReplicaSet, DaemonSet, Pod, Service, PVC, PodDisruptionBudget, ReplicationController, Job
-  - **Argo Rollout** (`Rollout.argoproj.io`): reads `status.phase` — `Healthy`→Ready, `Degraded`/`Paused`→InProgress
+  - **Argo Rollout** (`Rollout.argoproj.io`): reads `status.phase` — `Healthy`/`Inactive`→Ready, `Degraded`/`Progressing`/`Paused`/`Error`→InProgress
   - Everything else: `statusFromStandardConditions` (checks `Ready`/`InProgress` condition types)
 
 - `condition.go` — helpers for setting/clearing `ApplicationCondition` entries on the status
