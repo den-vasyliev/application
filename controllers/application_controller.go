@@ -88,13 +88,7 @@ func (r *ApplicationReconciler) updateComponents(ctx context.Context, app *appv1
 	var errs []error
 	resources := r.fetchComponentListResources(ctx, app.Spec.ComponentGroupKinds, app.Spec.Selector, app.Namespace, &errs)
 
-	if app.Spec.AddOwnerRef {
-		ownerRef := metav1.NewControllerRef(app, appv1beta1.GroupVersion.WithKind("Application"))
-		*ownerRef.Controller = false
-		if err := r.setOwnerRefForResources(ctx, *ownerRef, resources); err != nil {
-			errs = append(errs, err)
-		}
-	}
+	// Owner ref setting is disabled: the controller is a read-only aggregator.
 	return resources, errs
 }
 
