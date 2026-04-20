@@ -280,18 +280,8 @@ func cronJobStatus(u *unstructured.Unstructured) (string, error) {
 		return StatusUnknown, err
 	}
 
+	// Only InProgress when explicitly suspended; schedule/success history doesn't reflect app health.
 	if cj.Spec.Suspend != nil && *cj.Spec.Suspend {
-		return StatusInProgress, nil
-	}
-
-	// Never been scheduled yet — CronJob is configured and waiting
-	if cj.Status.LastScheduleTime == nil {
-		return StatusReady, nil
-	}
-
-	// Scheduled but no successful completion, or last schedule is more recent than last success
-	if cj.Status.LastSuccessfulTime == nil ||
-		cj.Status.LastScheduleTime.After(cj.Status.LastSuccessfulTime.Time) {
 		return StatusInProgress, nil
 	}
 

@@ -56,7 +56,9 @@ Test assets (etcd, kube-apiserver, kubectl) must be present at the paths set by 
   4. Patch the `Application` status
 
 - `status.go` — `status()` dispatches per-resource readiness computation. Handled types:
-  - Standard k8s: Deployment, StatefulSet, ReplicaSet, DaemonSet, Pod, Service, PVC, PodDisruptionBudget, ReplicationController, Job
+  - Standard k8s: Deployment, StatefulSet, ReplicaSet, DaemonSet, Pod, Service, PVC, PodDisruptionBudget, ReplicationController, Job, CronJob
+  - **CronJob**: Ready unless `spec.suspend=true` — schedule/success history does not affect app health
+  - **Deployment**: scaled to zero (`spec.replicas=0`) is treated as Ready
   - **Argo Rollout** (`Rollout.argoproj.io`): reads `status.phase` — `Healthy`/`Inactive`→Ready, `Degraded`/`Progressing`/`Paused`/`Error`→InProgress
   - Everything else: `statusFromStandardConditions` (checks `Ready`/`InProgress` condition types)
 
