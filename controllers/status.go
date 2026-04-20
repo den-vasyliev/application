@@ -124,12 +124,14 @@ func deploymentStatus(u *unstructured.Unstructured) (string, error) {
 		}
 	}
 
+	scaledToZero := *deployment.Spec.Replicas == 0 && deployment.Status.Replicas == 0
+
 	if deployment.Status.ObservedGeneration == deployment.Generation &&
 		deployment.Status.Replicas == *deployment.Spec.Replicas &&
 		deployment.Status.ReadyReplicas == *deployment.Spec.Replicas &&
 		deployment.Status.AvailableReplicas == *deployment.Spec.Replicas &&
-		deployment.Status.Conditions != nil && len(deployment.Status.Conditions) > 0 &&
-		(progressing || available) && !replicaFailure {
+		!replicaFailure &&
+		(scaledToZero || (deployment.Status.Conditions != nil && len(deployment.Status.Conditions) > 0 && (progressing || available))) {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil
@@ -306,7 +308,7 @@ func rolloutStatus(u *unstructured.Unstructured) (string, error) {
 		return StatusInProgress, nil
 	}
 	switch phase {
-	case "Healthy":
+	case "Healthy", "Inactive":
 		return StatusReady, nil
 	case "Degraded", "Progressing", "Paused", "Error", "Unknown":
 		return StatusInProgress, nil

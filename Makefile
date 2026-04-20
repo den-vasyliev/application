@@ -1,4 +1,4 @@
-# Copyright 2019 The Kubernetes Authors.
+# Copyright 2026 The Kubernetes Authors.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Makefile for application
@@ -42,9 +42,15 @@ RBAC_ROOT ?= $(MANIFEST_ROOT)/rbac
 COVER_FILE ?= cover.out
 
 VERS := dev v0.8.3
-.DEFAULT_GOAL := all
+.DEFAULT_GOAL := help
+
+.PHONY: help
+help: ## Show this help
+	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make \033[36m<target>\033[0m\n\nTargets:\n"} \
+	  /^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+
 .PHONY: all
-all: generate fix vet fmt manifests test lint license misspell tidy bin/kube-app-manager
+all: generate fix vet fmt manifests test lint misspell tidy bin/kube-app-manager ## Run full build pipeline
 
 
 ## --------------------------------------
@@ -73,13 +79,12 @@ $(TOOLBIN)/kustomize:
 $(TOOLBIN)/kind:
 	GOBIN=$(TOOLBIN) GO111MODULE=on go get sigs.k8s.io/kind@v0.9.0
 
-$(TOOLBIN)/addlicense:
-	GOBIN=$(TOOLBIN) GO111MODULE=on go get github.com/google/addlicense
 
 $(TOOLBIN)/misspell:
 	GOBIN=$(TOOLBIN) GO111MODULE=on go get github.com/client9/misspell/cmd/misspell@v0.3.4
 
 .PHONY: install-tools
+install-tools: ## Install all tool binaries into hack/tools/bin
 install-tools: \
 	$(TOOLBIN)/controller-gen \
 	$(TOOLBIN)/golangci-lint \
@@ -87,7 +92,6 @@ install-tools: \
 	$(TOOLBIN)/conversion-gen \
 	$(TOOLBIN)/kubebuilder \
 	$(TOOLBIN)/kustomize \
-	$(TOOLBIN)/addlicense \
 	$(TOOLBIN)/misspell \
 	$(TOOLBIN)/kind
 
@@ -97,7 +101,7 @@ install-tools: \
 
 # Run tests
 .PHONY: test
-test: $(TOOLBIN)/etcd $(TOOLBIN)/kube-apiserver $(TOOLBIN)/kubectl
+test: $(TOOLBIN)/etcd $(TOOLBIN)/kube-apiserver $(TOOLBIN)/kubectl ## Run unit tests with envtest
 	TEST_ASSET_KUBECTL=$(TOOLBIN)/kubectl \
 	TEST_ASSET_KUBE_APISERVER=$(TOOLBIN)/kube-apiserver \
 	TEST_ASSET_ETCD=$(TOOLBIN)/etcd \
@@ -105,7 +109,7 @@ test: $(TOOLBIN)/etcd $(TOOLBIN)/kube-apiserver $(TOOLBIN)/kubectl
 
 # Run e2e-tests (envtest-based, no cluster required)
 .PHONY: e2e-test
-e2e-test: generate fmt vet $(TOOLBIN)/etcd $(TOOLBIN)/kube-apiserver $(TOOLBIN)/kubectl
+e2e-test: generate fmt vet $(TOOLBIN)/etcd $(TOOLBIN)/kube-apiserver $(TOOLBIN)/kubectl ## Run e2e tests (envtest, no cluster needed)
 	TEST_ASSET_KUBECTL=$(TOOLBIN)/kubectl \
 	TEST_ASSET_KUBE_APISERVER=$(TOOLBIN)/kube-apiserver \
 	TEST_ASSET_ETCD=$(TOOLBIN)/etcd \
@@ -116,22 +120,22 @@ e2e-test: generate fmt vet $(TOOLBIN)/etcd $(TOOLBIN)/kube-apiserver $(TOOLBIN)/
 ## --------------------------------------
 
 # Build kube-app-kube-app-manager binary
-bin/kube-app-manager: main.go generate fmt vet manifests
+bin/kube-app-manager: main.go ## Build the controller binary
 	go build -o bin/kube-app-manager main.go
 
 # Run against the configured Kubernetes cluster in ~/.kube/config
 .PHONY: runbg
-runbg: bin/kube-app-manager
+runbg: bin/kube-app-manager ## Run controller in background, logs to kube-app-manager.log
 	bin/kube-app-manager --metrics-addr ":8083" >& kube-app-manager.log & echo $$! > kube-app-manager.pid
 
 # Run against the configured Kubernetes cluster in ~/.kube/config
 .PHONY: run
-run: bin/kube-app-manager
+run: bin/kube-app-manager ## Run controller against current kubeconfig
 	bin/kube-app-manager
 
 # Debug using the configured Kubernetes cluster in ~/.kube/config
 .PHONY: debug
-debug: generate fmt vet manifests
+debug: generate fmt vet manifests ## Debug controller with dlv
 	dlv debug ./main.go
 
 
@@ -140,27 +144,24 @@ debug: generate fmt vet manifests
 ## --------------------------------------
 
 .PHONY: fmt
-fmt:
+fmt: ## Run go fmt
 	go fmt ./api/... ./controllers/...
 
 .PHONY: vet
-vet:
+vet: ## Run go vet
 	go vet ./api/... ./controllers/...
 
 .PHONY: fix
-fix:
+fix: ## Run go fix
 	go fix ./api/... ./controllers/...
 
-.PHONY: license
-license: $(TOOLBIN)/addlicense
-	$(TOOLBIN)/addlicense  -y $(shell date +"%Y") -c "The Kubernetes Authors." -f LICENSE_TEMPLATE .
 
 .PHONY: tidy
-tidy:
+tidy: ## Run go mod tidy
 	go mod tidy
 
 .PHONY: lint
-lint: $(TOOLBIN)/golangci-lint
+lint: $(TOOLBIN)/golangci-lint ## Run golangci-lint
 	$(TOOLBIN)/golangci-lint run ./...
 
 .PHONY: misspell
@@ -179,12 +180,11 @@ misspell-fix: $(TOOLBIN)/misspell
 # Deploy controller in the configured Kubernetes cluster in ~/.kube/config
 # This is expected to be used by user during dev
 .PHONY: deploy
-deploy:
+deploy: ## Deploy CRDs + controller to current cluster
 	kubectl apply -f deploy/kube-app-manager-aio.yaml
 
-# unDeploy controller in the configured Kubernetes cluster in ~/.kube/config
 .PHONY: undeploy
-undeploy:
+undeploy: ## Remove CRDs + controller from current cluster
 	kubectl delete -f deploy/kube-app-manager-aio.yaml
 
 .PHONY: deploy-dev
@@ -201,12 +201,11 @@ undeploy-dev: $(TOOLBIN)/kubectl generate-resources
 ## --------------------------------------
 # Install CRDs into a cluster,
 .PHONY: deploy-crd
-deploy-crd: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl
+deploy-crd: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl ## Install CRDs into current cluster
 	$(TOOLBIN)/kustomize build config/crd| $(TOOLBIN)/kubectl apply -f -
 
-# Uninstall CRDs from a cluster
 .PHONY: undeploy-crd
-undeploy-crd: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl
+undeploy-crd: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl ## Uninstall CRDs from current cluster
 	$(TOOLBIN)/kustomize build config/crd| $(TOOLBIN)/kubectl delete -f -
 
 ## --------------------------------------
@@ -231,16 +230,15 @@ undeploy-wordpress: $(TOOLBIN)/kustomize $(TOOLBIN)/kubectl
 ## --------------------------------------
 
 .PHONY: generate
-generate: license ## Generate code
+generate: ## Generate code
 	$(MAKE) generate-go
 	$(MAKE) manifests
 	$(MAKE) generate-resources
 	VERSION_FILE=VERSION $(MAKE) generate-resources
-	$(MAKE) license
 
 # Generate manifests e.g. CRD, RBAC etc.
 .PHONY: manifests
-manifests: $(TOOLBIN)/controller-gen
+manifests: $(TOOLBIN)/controller-gen ## Regenerate CRD/RBAC/webhook manifests
 	$(TOOLBIN)/controller-gen \
 		$(CRD_OPTIONS) \
 		rbac:roleName=kube-app-manager-role \
@@ -303,7 +301,7 @@ ko-push: ## Build and push container image using ko
 		.
 
 .PHONY: clean
-clean:
+clean: ## Remove build artifacts and tool binaries
 	go clean --cache
 	rm -f $(COVER_FILE)
 	rm -f $(TOOLBIN)/kustomize
@@ -314,7 +312,6 @@ clean:
 	rm -f $(TOOLBIN)/etcd
 	rm -f $(TOOLBIN)/kube-apiserver
 	rm -f $(TOOLBIN)/kubebuilder
-	rm -f $(TOOLBIN)/addlicense
 	rm -f $(TOOLBIN)/kubectl
 	rm -f $(TOOLBIN)/kustomize
 	rm -f $(TOOLBIN)/misspell
