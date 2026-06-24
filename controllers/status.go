@@ -86,10 +86,20 @@ func stsStatus(u *unstructured.Unstructured) (string, error) {
 		return StatusUnknown, err
 	}
 
+	desired := int32(1)
+	if sts.Spec.Replicas != nil {
+		desired = *sts.Spec.Replicas
+	}
+	scaledToZero := desired == 0 && sts.Status.Replicas == 0
+
+	// Ready when every replica the controller is currently managing is ready, rather than
+	// requiring ReadyReplicas == desired. During an HPA scale-up (e.g. 2->3) the new pod
+	// takes its readiness-probe window to come up while the existing replicas keep serving;
+	// gating on the full desired count would flap Ready->NotReady on every scale-up and page
+	// monitoring with a false "degraded" incident. CurrentReplicas reflects what's actually
+	// rolled, so ReadyReplicas == CurrentReplicas means "all running pods are healthy".
 	if sts.Status.ObservedGeneration == sts.Generation &&
-		sts.Status.Replicas == *sts.Spec.Replicas &&
-		sts.Status.ReadyReplicas == *sts.Spec.Replicas &&
-		sts.Status.CurrentReplicas == *sts.Spec.Replicas {
+		(scaledToZero || (sts.Status.CurrentReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.CurrentReplicas)) {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil
@@ -103,15 +113,10 @@ func deploymentStatus(u *unstructured.Unstructured) (string, error) {
 	}
 
 	replicaFailure := false
-	progressing := false
 	available := false
 
 	for _, condition := range deployment.Status.Conditions {
 		switch condition.Type {
-		case appsv1.DeploymentProgressing:
-			if condition.Status == corev1.ConditionTrue && condition.Reason == "NewReplicaSetAvailable" {
-				progressing = true
-			}
 		case appsv1.DeploymentAvailable:
 			if condition.Status == corev1.ConditionTrue {
 				available = true
@@ -119,19 +124,22 @@ func deploymentStatus(u *unstructured.Unstructured) (string, error) {
 		case appsv1.DeploymentReplicaFailure:
 			if condition.Status == corev1.ConditionTrue {
 				replicaFailure = true
-				break
 			}
 		}
 	}
 
 	scaledToZero := *deployment.Spec.Replicas == 0 && deployment.Status.Replicas == 0
 
+	// Ready when Kubernetes reports the Deployment Available (>= minAvailable replicas
+	// serving) and there's no ReplicaFailure. We deliberately do NOT require
+	// ReadyReplicas == spec.replicas: during an HPA scale-up (e.g. 2->3) the spec jumps
+	// immediately while the new replica takes its readiness-probe window (up to 90s) to
+	// become ready. The existing replicas keep serving and Available stays True, so the
+	// app is healthy — gating on full desired count would flap Ready->NotReady on every
+	// scale-up and page monitoring with a false "degraded" incident.
 	if deployment.Status.ObservedGeneration == deployment.Generation &&
-		deployment.Status.Replicas == *deployment.Spec.Replicas &&
-		deployment.Status.ReadyReplicas == *deployment.Spec.Replicas &&
-		deployment.Status.AvailableReplicas == *deployment.Spec.Replicas &&
 		!replicaFailure &&
-		(scaledToZero || (deployment.Status.Conditions != nil && len(deployment.Status.Conditions) > 0 && (progressing || available))) {
+		(scaledToZero || available) {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil
@@ -146,18 +154,23 @@ func replicasetStatus(u *unstructured.Unstructured) (string, error) {
 
 	replicaFailure := false
 	for _, condition := range rs.Status.Conditions {
-		switch condition.Type {
-		case appsv1.ReplicaSetReplicaFailure:
-			if condition.Status == corev1.ConditionTrue {
-				replicaFailure = true
-				break
-			}
+		if condition.Type == appsv1.ReplicaSetReplicaFailure && condition.Status == corev1.ConditionTrue {
+			replicaFailure = true
 		}
 	}
-	if rs.Status.ObservedGeneration == rs.Generation &&
-		rs.Status.Replicas == *rs.Spec.Replicas &&
-		rs.Status.ReadyReplicas == *rs.Spec.Replicas &&
-		rs.Status.AvailableReplicas == *rs.Spec.Replicas && !replicaFailure {
+
+	desired := int32(1)
+	if rs.Spec.Replicas != nil {
+		desired = *rs.Spec.Replicas
+	}
+	scaledToZero := desired == 0 && rs.Status.Replicas == 0
+
+	// Ready when at least one replica is available (serving) and there's no ReplicaFailure,
+	// rather than requiring AvailableReplicas == desired. A scale-up leaves the new replica
+	// pending for its readiness-probe window while existing ones serve; gating on the full
+	// desired count would flap Ready->NotReady on every scale-up and false-page monitoring.
+	if rs.Status.ObservedGeneration == rs.Generation && !replicaFailure &&
+		(scaledToZero || rs.Status.AvailableReplicas > 0) {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil
@@ -170,9 +183,15 @@ func daemonsetStatus(u *unstructured.Unstructured) (string, error) {
 		return StatusUnknown, err
 	}
 
+	// Ready when no scheduled pod is currently unavailable, rather than requiring
+	// NumberReady == DesiredNumberScheduled exactly. When a node joins the cluster the new
+	// daemon pod is briefly not-yet-ready; DesiredNumberScheduled jumps immediately while
+	// NumberReady lags, which would flap the app to NotReady on every node scale-up. The DS
+	// controller's own NumberUnavailable counter respects maxUnavailable, so == 0 means the
+	// rollout/coverage is healthy. A DS that schedules onto zero nodes (e.g. nodeSelector
+	// matches nothing) is also Ready.
 	if ds.Status.ObservedGeneration == ds.Generation &&
-		ds.Status.DesiredNumberScheduled == ds.Status.NumberAvailable &&
-		ds.Status.DesiredNumberScheduled == ds.Status.NumberReady {
+		ds.Status.NumberUnavailable == 0 {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil
@@ -242,10 +261,17 @@ func replicationControllerStatus(u *unstructured.Unstructured) (string, error) {
 		return StatusUnknown, err
 	}
 
+	desired := int32(1)
+	if rc.Spec.Replicas != nil {
+		desired = *rc.Spec.Replicas
+	}
+	scaledToZero := desired == 0 && rc.Status.Replicas == 0
+
+	// Ready when at least one replica is available (serving), rather than requiring
+	// AvailableReplicas == desired — see replicasetStatus: a scale-up must not flap the app
+	// to NotReady while the new replica comes up and existing ones keep serving.
 	if rc.Status.ObservedGeneration == rc.Generation &&
-		rc.Status.Replicas == *rc.Spec.Replicas &&
-		rc.Status.ReadyReplicas == *rc.Spec.Replicas &&
-		rc.Status.AvailableReplicas == *rc.Spec.Replicas {
+		(scaledToZero || rc.Status.AvailableReplicas > 0) {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil

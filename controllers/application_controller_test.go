@@ -58,7 +58,8 @@ var _ = Describe("Application Reconciler", func() {
 		applicationReconciler = NewReconciler(mgr)
 		ctx = context.Background()
 		recFn, requests = SetupTestReconcile(applicationReconciler)
-		Expect(CreateController("app", mgr, recFn)).NotTo(HaveOccurred())
+		// Unique name per spec: controller names must be unique per process.
+		Expect(CreateController("app-"+uuid.New().String(), mgr, recFn)).NotTo(HaveOccurred())
 
 		stopMgr, mgrStopped = StartTestManager(mgr)
 	})
@@ -266,7 +267,15 @@ var _ = Describe("Application Reconciler", func() {
 			Eventually(requests, timeout).Should(Receive(Equal(expectedRequest)))
 		})
 
-		It("should update the application status, as well as the components' ownerReference", func() {
+		It("should track components in status without mutating their ownerReferences", func() {
+			// Owner-ref mutation is disabled: the controller is a read-only aggregator
+			// (see commit d3d8790). It must populate the Application's ComponentList from
+			// the label selector but never write ownerReferences onto the matched objects.
+			deployment = createDeployment(labelSet1, namespace1)
+			service = createService(labelSet1, namespace1)
+			Expect(c.Create(ctx, deployment)).NotTo(HaveOccurred())
+			Expect(c.Create(ctx, service)).NotTo(HaveOccurred())
+
 			application := &appv1beta1.Application{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "application-01",
@@ -276,37 +285,23 @@ var _ = Describe("Application Reconciler", func() {
 				Spec: appv1beta1.ApplicationSpec{
 					Selector: &metav1.LabelSelector{MatchLabels: labelSet1},
 					ComponentGroupKinds: []metav1.GroupKind{
-						{
-							Group: "apps",
-							Kind:  "Deployment",
-						},
-						{
-							Group: "v1",
-							Kind:  "Service",
-						},
+						{Group: "apps", Kind: "Deployment"},
+						{Group: "v1", Kind: "Service"},
 					},
-					AddOwnerRef: true,
 				}}
 
 			Expect(deployment.OwnerReferences).To(BeNil())
 			Expect(service.OwnerReferences).To(BeNil())
 
-			err := c.Create(ctx, application)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(c.Create(ctx, application)).NotTo(HaveOccurred())
 			waitForComponentsAddedToStatus(ctx, application, deployment.Name, service.Name)
 
-			_ = wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+			// Give the controller ample time; ownerReferences must stay empty throughout.
+			Consistently(func() bool {
 				fetchUpdatedDeployment(ctx, deployment)
 				fetchUpdatedService(ctx, service)
-				if len(deployment.OwnerReferences) == 1 && len(service.OwnerReferences) == 1 {
-					return true, nil
-				}
-				return false, nil
-			})
-
-			Expect(deployment.OwnerReferences[0].Name).To(Equal(application.Name))
-			Expect(service.OwnerReferences[0].Name).To(Equal(application.Name))
-
+				return len(deployment.OwnerReferences) == 0 && len(service.OwnerReferences) == 0
+			}, 5*time.Second, time.Second).Should(BeTrue(), "controller must not set ownerReferences")
 		})
 	})
 
