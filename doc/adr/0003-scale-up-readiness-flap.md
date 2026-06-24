@@ -1,7 +1,7 @@
 # ADR-0003: Don't Flap Workload Readiness on HPA Scale-Up
 
 - **Date:** 2026-06-24
-- **Status:** Proposed (in test on image tag `25171c3`)
+- **Status:** Accepted (live on image tag `25171c3`)
 - **Commit:** `25171c3`
 
 ## Context

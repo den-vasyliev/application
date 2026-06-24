@@ -16,8 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   incident. Applies to Deployment, StatefulSet, ReplicaSet, ReplicationController, and
   DaemonSet (node-join). Scaled-to-zero still resolves to `Ready`, and genuine failures
   (nothing available / `ReplicaFailure` / unavailable pods) still report `InProgress`.
-  See [ADR-0003](doc/adr/0003-scale-up-readiness-flap.md). _(in testing on image tag
-  `25171c3`)_
+  See [ADR-0003](doc/adr/0003-scale-up-readiness-flap.md) (Accepted). _(live on image tag
+  `25171c3`; `main` rebuilt as `1f3ab67`)_
 
 ### Changed
 
