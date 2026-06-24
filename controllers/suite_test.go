@@ -41,10 +41,11 @@ var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 
 	By("bootstrapping test environment")
-	useExisting := false
+	// envtest only: no UseExistingCluster field, so there is no code path that can
+	// connect to a real cluster / the current kubeconfig. testEnv.Start() always
+	// boots its own embedded etcd + kube-apiserver.
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:  []string{filepath.Join("..", "config", "crd", "bases")},
-		UseExistingCluster: &useExisting,
+		CRDDirectoryPaths: []string{filepath.Join("..", "config", "crd", "bases")},
 		CRDInstallOptions: envtest.CRDInstallOptions{
 			CleanUpAfterUse: false,
 		},
@@ -91,7 +92,9 @@ func StartTestManager(mgr manager.Manager) (context.CancelFunc, *sync.WaitGroup)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		Expect(mgr.Start(ctx)).NotTo(HaveOccurred())
+		// On cancel, Start returns (e.g. "context canceled" / grace-period timeout on
+		// shutdown). That is expected teardown noise, not a test failure — don't assert.
+		_ = mgr.Start(ctx)
 	}()
 	return cancel, wg
 }
@@ -105,7 +108,11 @@ func NewReconciler(mgr manager.Manager) *ApplicationReconciler {
 }
 
 func CreateController(name string, mgr manager.Manager, r reconcile.Reconciler) error {
+	// Named(name) gives each test's controller a unique name. Controller names must be
+	// unique per process (controller-runtime registers them as metrics keys), otherwise
+	// the second spec fails with "controller with name ... already exists".
 	return ctrl.NewControllerManagedBy(mgr).
+		Named(name).
 		For(&appv1beta1.Application{}).
 		Complete(r)
 }

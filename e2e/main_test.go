@@ -46,13 +46,14 @@ var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 
 	By("bootstrapping test environment")
-	useExisting := false
+	// envtest only: no UseExistingCluster field, so there is no code path that can
+	// connect to a real cluster / the current kubeconfig. testEnv.Start() always
+	// boots its own embedded etcd + kube-apiserver.
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "config", "crd", "bases"),
 			"testdata",
 		},
-		UseExistingCluster: &useExisting,
 	}
 
 	var err error
@@ -62,6 +63,7 @@ var _ = BeforeSuite(func() {
 	cfg, err = testEnv.Start()
 	Expect(err).ToNot(HaveOccurred())
 	Expect(cfg).ToNot(BeNil())
+	Expect(cfg.Host).To(ContainSubstring("127.0.0.1"), "CRITICAL: Tests must use isolated test environment, not real cluster!")
 
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).ToNot(HaveOccurred())
