@@ -57,8 +57,14 @@ Test assets (etcd, kube-apiserver, kubectl) must be present at the paths set by 
 
 - `status.go` — `status()` dispatches per-resource readiness computation. Handled types:
   - Standard k8s: Deployment, StatefulSet, ReplicaSet, DaemonSet, Pod, Service, PVC, PodDisruptionBudget, ReplicationController, Job, CronJob
+  - **Scalable workloads are Ready when *serving*, not when at full desired count** — so an HPA scale-up (e.g. 2→3) does not flap the app to `InProgress` while the new pod passes its readiness probe (see ADR-0003):
+    - **Deployment**: `Available` condition true + no `ReplicaFailure` (does not require `ReadyReplicas == spec.replicas`)
+    - **StatefulSet**: `ReadyReplicas == CurrentReplicas` (pods the controller is actually managing, not the desired spec count)
+    - **ReplicaSet**: `AvailableReplicas > 0` + no `ReplicaFailure`
+    - **ReplicationController**: `AvailableReplicas > 0`
+    - **DaemonSet**: `NumberUnavailable == 0` (respects `maxUnavailable`, so a node join doesn't flap)
+    - All preserve scaled-to-zero (`spec.replicas=0`) → Ready, and still report `InProgress` on genuine failure (nothing available / `ReplicaFailure` / unavailable pods)
   - **CronJob**: Ready unless `spec.suspend=true` — schedule/success history does not affect app health
-  - **Deployment**: scaled to zero (`spec.replicas=0`) is treated as Ready
   - **Argo Rollout** (`Rollout.argoproj.io`): reads `status.phase` — `Healthy`/`Inactive`→Ready, `Degraded`/`Progressing`/`Paused`/`Error`→InProgress
   - Everything else: `statusFromStandardConditions` (checks `Ready`/`InProgress` condition types)
 
