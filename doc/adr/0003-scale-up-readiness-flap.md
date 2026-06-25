@@ -53,6 +53,7 @@ Each kind uses the signal Kubernetes already publishes for "available":
 | **ReplicaSet** | `AvailableReplicas > 0` and no `ReplicaFailure` | |
 | **ReplicationController** | `AvailableReplicas > 0` | no conditions in RC status |
 | **DaemonSet** | `NumberUnavailable == 0` | the DS controller's own counter respects `maxUnavailable`, so a node join doesn't flap |
+| **Rollout** (Argo) | `phase` ∈ {`Healthy`,`Inactive`,`Progressing`,`Paused`}; or `spec.replicas==0` | added by the 2026-06-25 amendment below; `Progressing`/`Paused` are serving states, not failures |
 
 All preserve the **scaled-to-zero → Ready** case, and still report `InProgress` on
 genuine failure (nothing available / `ReplicaFailure=True` / unavailable pods).
@@ -78,13 +79,52 @@ from the Ready predicate of all five kinds.** Genuine failure is already signall
 `Available=False` / `ReplicaFailure=True` / unavailable pods, which still gate
 `InProgress` regardless of generation skew.
 
+### Amendment (2026-06-25): the same flap exists for Argo Rollouts
+
+The original ADR covered the five built-in workload kinds but **not** Argo Rollouts,
+which is what production actually runs on (≈27 Rollouts vs a handful of Deployments).
+`rolloutStatus` mapped `status.phase` directly:
+
+```
+Healthy / Inactive                          -> Ready
+Degraded / Progressing / Paused / Error     -> InProgress
+phase missing/empty                         -> InProgress
+```
+
+A Rollout scaling up (HPA or a replica bump) — or stepping through a canary /
+blue-green rollout — sits in `phase: Progressing` (and `Paused` at a healthy pause)
+while the new pod starts, even though its `Available` condition stays `True` ("Rollout
+has minimum availability"). Mapping `Progressing`/`Paused` to `InProgress` is the
+*exact* scale-up false positive this ADR exists to remove, just on a different kind.
+
+**`Progressing` and `Paused` now map to `Ready`.** Only `Degraded`/`Error` (a real
+failure) report `InProgress`; an empty phase still reports `InProgress`.
+
+**Scaled-to-zero Rollouts are `Ready` regardless of phase.** A Rollout with
+`spec.replicas=0` runs nothing, so a `Degraded`/`InvalidSpec` phase on it is noise
+nobody acts on. Real example: `example-parked-rollout` sits at
+`DESIRED 0` with `phase: Degraded` (`InvalidSpec` — missing `strategy.canary`). It must
+not degrade its Application while parked; the error only becomes actionable if it is
+scaled back up, at which point the phase reflects it on a non-zero replica count. This
+mirrors the scaled-to-zero → `Ready` treatment of the other kinds — with the deliberate
+difference that for a Rollout the zero check comes *first*, so a parked-but-broken
+Rollout reads `Ready`, not `InProgress`.
+
+Note: `Error` and `Unknown` were in the original switch but Argo Rollouts never emits
+them as `phase` values; they are kept defensively (`Error` → `InProgress`).
+
 ### Behavior matrix
 
 | Scenario | Before | After |
 |----------|--------|-------|
 | Scale-up 2→3, existing pods healthy | `InProgress` (false incident) | **Ready** |
+| Scale-up while `observedGeneration` lags `generation` | `InProgress` (false incident) | **Ready** |
+| Rollout scaling up / canary step (`phase: Progressing`) | `InProgress` (false incident) | **Ready** |
+| Rollout paused while serving (`phase: Paused`) | `InProgress` (false incident) | **Ready** |
+| Rollout scaled to zero with `Degraded`/`InvalidSpec` phase | `InProgress` | **Ready** |
 | All replicas down / can't meet minAvailable | `InProgress` | `InProgress` |
 | `ReplicaFailure=True` | `InProgress` | `InProgress` |
+| Rollout `phase: Degraded`/`Error` at non-zero replicas | `InProgress` | `InProgress` |
 | Scaled to zero | `Ready` | `Ready` |
 
 ## Alternatives Considered
@@ -111,15 +151,21 @@ from the Ready predicate of all five kinds.** Genuine failure is already signall
 
 ## Tests
 
-`controllers/status_test.go` — unit specs for all five kinds, each covering a
+`controllers/status_test.go` — unit specs for all five built-in kinds, each covering a
 scale-up regression, a broken case, and scaled-to-zero. Per the 2026-06-25 amendment,
 every kind also has a spec that reproduces the **generation-skew window**
 (`generation` ahead of `observedGeneration` while `Available=True`) and asserts the
 workload stays `Ready` — this is the case the original specs missed, because the test
-helper hardcoded `ObservedGeneration = Generation` and so never exercised the lag. The
-pre-existing `controllers` envtest suite was also repaired so it runs (controller-name
-collision, manager-shutdown assertion, and a stale ownerReference spec that tested
-removed owner-ref mutation).
+helper hardcoded `ObservedGeneration = Generation` and so never exercised the lag.
+
+The second 2026-06-25 amendment adds a `rolloutStatus` spec block (there were **no**
+Rollout tests before — the reason that kind shipped untested): every phase branch,
+`Progressing`/`Paused` → `Ready`, `Degraded`/`Error` → `InProgress`, the missing-phase
+fallback, and the scaled-to-zero-ignores-`Degraded` case (`example-parked-rollout`).
+
+The pre-existing `controllers` envtest suite was also repaired so it runs
+(controller-name collision, manager-shutdown assertion, and a stale ownerReference spec
+that tested removed owner-ref mutation).
 
 ## Deployment
 

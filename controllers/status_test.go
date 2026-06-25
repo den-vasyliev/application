@@ -263,3 +263,64 @@ var _ = Describe("daemonsetStatus", func() {
 		Expect(statusOf(newDS(1, 0, 0, 0))).To(Equal(StatusReady))
 	})
 })
+
+var _ = Describe("rolloutStatus", func() {
+	// Rollout is a CRD with no typed dep in this repo, so build the unstructured directly.
+	newRollout := func(replicas *int64, phase string) *unstructured.Unstructured {
+		obj := map[string]interface{}{
+			"spec":   map[string]interface{}{},
+			"status": map[string]interface{}{},
+		}
+		if replicas != nil {
+			obj["spec"].(map[string]interface{})["replicas"] = *replicas
+		}
+		if phase != "" {
+			obj["status"].(map[string]interface{})["phase"] = phase
+		}
+		u := &unstructured.Unstructured{Object: obj}
+		u.SetAPIVersion("argoproj.io/v1alpha1")
+		u.SetKind("Rollout")
+		return u
+	}
+	int64p := func(i int64) *int64 { return &i }
+	statusOf := func(replicas *int64, phase string) string {
+		res, err := rolloutStatus(newRollout(replicas, phase))
+		Expect(err).NotTo(HaveOccurred())
+		return res
+	}
+
+	It("is Ready when Healthy", func() {
+		Expect(statusOf(int64p(4), "Healthy")).To(Equal(StatusReady))
+	})
+	It("is Ready when Inactive", func() {
+		Expect(statusOf(int64p(4), "Inactive")).To(Equal(StatusReady))
+	})
+	It("stays Ready while Progressing (scale-up / canary step, still serving)", func() {
+		// The Rollout equivalent of the Deployment 2->3 flap: Progressing during an HPA
+		// scale-up must not degrade the Application while existing pods keep serving.
+		Expect(statusOf(int64p(5), "Progressing")).To(Equal(StatusReady))
+	})
+	It("stays Ready while Paused (blue/green or canary pause, serving)", func() {
+		Expect(statusOf(int64p(4), "Paused")).To(Equal(StatusReady))
+	})
+	It("is InProgress when Degraded", func() {
+		Expect(statusOf(int64p(4), "Degraded")).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when Error", func() {
+		Expect(statusOf(int64p(4), "Error")).To(Equal(StatusInProgress))
+	})
+	It("is Ready when scaled to zero, ignoring a Degraded phase", func() {
+		// example-parked-rollout: spec.replicas=0, phase=Degraded (InvalidSpec). Nothing runs,
+		// so nobody acts on the error — it only becomes real once scaled back up.
+		Expect(statusOf(int64p(0), "Degraded")).To(Equal(StatusReady))
+	})
+	It("is Ready when scaled to zero with no phase", func() {
+		Expect(statusOf(int64p(0), "")).To(Equal(StatusReady))
+	})
+	It("is InProgress when phase is missing and not scaled to zero", func() {
+		Expect(statusOf(int64p(4), "")).To(Equal(StatusInProgress))
+	})
+	It("is Unknown on an unrecognized phase", func() {
+		Expect(statusOf(int64p(4), "SomethingNew")).To(Equal(StatusUnknown))
+	})
+})
