@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-06-25
+
+### Changed
+
+- Silenced the framework's `Starting EventSource` log flood. With one dynamic watch per
+  component kind, controller-runtime emitted a `Starting EventSource` INFO line per watch
+  — and because every dynamic source is an `*unstructured.Unstructured`, the line couldn't
+  even name the kind. The controller now gates the framework's controller logger at V(1)
+  (via `WithLogConstructor`), so that chatter is hidden at default INFO. Our own
+  `registered dynamic component watch` line — which carries the GVK — is restored to INFO
+  using the manager's ungated base logger, so you can still see exactly which kinds are
+  watched.
+
 ## [1.3.3] - 2026-06-25
 
 ### Changed
