@@ -19,6 +19,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   See [ADR-0003](doc/adr/0003-scale-up-readiness-flap.md) (Accepted). _(live on image tag
   `25171c3`; `main` rebuilt as `1f3ab67`)_
 
+- **Scale-up flap, part 2: removed the `ObservedGeneration` gate from the readiness
+  predicate.** The first fix (`25171c3`) still required `status.observedGeneration ==
+  metadata.generation` to report `Ready`. An HPA scale-up bumps `generation` instantly
+  while the workload controller writes `observedGeneration` a beat later; in that window
+  `Available` was still `True` but the generation clause was false, so the workload was
+  reported `InProgress` and the Application was paged as degraded anyway (observed in production
+  2026-06-25 on a build containing `25171c3`). The clause is removed from all five kinds;
+  genuine failure is still caught by `Available=False` / `ReplicaFailure` / unavailable
+  pods. Regression specs now reproduce the generation-skew window for every kind.
+
 ### Changed
 
 - Test suites are envtest-only: removed the `UseExistingCluster` option from both the

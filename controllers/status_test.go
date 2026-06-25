@@ -55,6 +55,16 @@ var _ = Describe("deploymentStatus", func() {
 		Expect(deploymentStatus(toUnstructured(d))).To(Equal(StatusReady))
 	})
 
+	It("stays Ready during a scale-up while observedGeneration still lags generation", func() {
+		// The real prod flap: an HPA scale-up bumps metadata.generation to 3 immediately,
+		// but the Deployment controller has not yet written status.observedGeneration (still
+		// 2). Available is True the whole time. Gating Ready on generation == observedGeneration
+		// would emit a false AppDegraded in this window. It must stay Ready.
+		d := newDeployment(3, 3, 2, 2, []apps.DeploymentCondition{availableTrue})
+		d.Status.ObservedGeneration = 2
+		Expect(deploymentStatus(toUnstructured(d))).To(Equal(StatusReady))
+	})
+
 	It("is InProgress when the Deployment is not Available", func() {
 		d := newDeployment(2, 3, 0, 0, []apps.DeploymentCondition{availableFalse})
 		Expect(deploymentStatus(toUnstructured(d))).To(Equal(StatusInProgress))
@@ -65,8 +75,10 @@ var _ = Describe("deploymentStatus", func() {
 		Expect(deploymentStatus(toUnstructured(d))).To(Equal(StatusInProgress))
 	})
 
-	It("is InProgress when status lags the spec generation", func() {
-		d := newDeployment(3, 3, 3, 3, []apps.DeploymentCondition{availableTrue})
+	It("is InProgress when status lags generation AND is not Available", func() {
+		// Generation skew alone must NOT degrade (see scale-up case above). A real problem
+		// is signalled by Available=False / ReplicaFailure, which is what gates InProgress.
+		d := newDeployment(3, 3, 0, 0, []apps.DeploymentCondition{availableFalse})
 		d.Status.ObservedGeneration = 2
 		Expect(deploymentStatus(toUnstructured(d))).To(Equal(StatusInProgress))
 	})
@@ -116,8 +128,15 @@ var _ = Describe("stsStatus", func() {
 	It("is Ready when scaled to zero", func() {
 		Expect(statusOf(newSTS(1, 0, 0, 0, 0))).To(Equal(StatusReady))
 	})
-	It("is InProgress when status lags generation", func() {
-		s := newSTS(3, 3, 3, 3, 3)
+	It("stays Ready during a scale-up while observedGeneration still lags generation", func() {
+		// generation bumped to 3 by the scale; controller has rolled 2 current pods, both
+		// ready, and not yet written observedGeneration (still 2). Must stay Ready.
+		s := newSTS(3, 3, 2, 2, 2)
+		s.Status.ObservedGeneration = 2
+		Expect(statusOf(s)).To(Equal(StatusReady))
+	})
+	It("is InProgress when a managed pod is not ready even if generation lags", func() {
+		s := newSTS(3, 3, 3, 2, 3)
 		s.Status.ObservedGeneration = 2
 		Expect(statusOf(s)).To(Equal(StatusInProgress))
 	})
@@ -150,6 +169,11 @@ var _ = Describe("replicasetStatus", func() {
 	})
 	It("stays Ready during scale-up (some replicas available)", func() {
 		Expect(statusOf(newRS(2, 3, 2, nil))).To(Equal(StatusReady))
+	})
+	It("stays Ready during a scale-up while observedGeneration lags generation", func() {
+		rs := newRS(3, 3, 2, nil)
+		rs.Status.ObservedGeneration = 2
+		Expect(statusOf(rs)).To(Equal(StatusReady))
 	})
 	It("is InProgress when nothing is available", func() {
 		Expect(statusOf(newRS(2, 3, 0, nil))).To(Equal(StatusInProgress))
@@ -187,6 +211,11 @@ var _ = Describe("replicationControllerStatus", func() {
 	It("stays Ready during scale-up", func() {
 		Expect(statusOf(newRC(2, 3, 2))).To(Equal(StatusReady))
 	})
+	It("stays Ready during a scale-up while observedGeneration lags generation", func() {
+		rc := newRC(3, 3, 2)
+		rc.Status.ObservedGeneration = 2
+		Expect(statusOf(rc)).To(Equal(StatusReady))
+	})
 	It("is InProgress when nothing is available", func() {
 		Expect(statusOf(newRC(2, 3, 0))).To(Equal(StatusInProgress))
 	})
@@ -221,6 +250,11 @@ var _ = Describe("daemonsetStatus", func() {
 	It("stays Ready when a node joins (desired jumps, none unavailable yet)", func() {
 		// New node scheduled but its pod not counted unavailable; existing pods serve.
 		Expect(statusOf(newDS(2, 4, 3, 0))).To(Equal(StatusReady))
+	})
+	It("stays Ready when a node joins while observedGeneration lags generation", func() {
+		ds := newDS(3, 4, 3, 0)
+		ds.Status.ObservedGeneration = 2
+		Expect(statusOf(ds)).To(Equal(StatusReady))
 	})
 	It("is InProgress when a scheduled pod is unavailable", func() {
 		Expect(statusOf(newDS(2, 4, 3, 1))).To(Equal(StatusInProgress))
