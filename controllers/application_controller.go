@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/util/retry"
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -46,6 +47,9 @@ type ApplicationReconciler struct {
 	controller controller.Controller
 	// cache feeds the dynamically registered component informers.
 	cache cache.Cache
+	// log is the manager's base logger (INFO), used for watch-registration messages so they
+	// are NOT gated by the controller's V(1) LogConstructor the way log.FromContext is.
+	log logr.Logger
 	// watchedKinds dedups dynamic watches so each component GVK is watched exactly once
 	// for the lifetime of the process.
 	watchedKinds sync.Map
@@ -75,7 +79,7 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Register real-time watches for this Application's component kinds (idempotent per
 	// GVK), so component status changes trigger a reconcile without waiting for the resync.
-	r.ensureComponentWatches(ctx, &app)
+	r.ensureComponentWatches(&app)
 
 	resources, errs := r.updateComponents(ctx, &app)
 	newApplicationStatus := r.getNewApplicationStatus(ctx, &app, resources, &errs)
@@ -324,14 +328,31 @@ func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Application here; component-kind watches are added lazily at runtime in Reconcile
 	// (see ensureComponentWatches), because the set of component kinds is not known until
 	// an Application declares them in spec.componentKinds.
+	//
+	// WithLogConstructor gates the framework's own controller logs at V(1): with one
+	// dynamic watch per component kind, controller-runtime emits a "Starting EventSource"
+	// INFO line per Watch() call, and because every dynamic source is an
+	// *unstructured.Unstructured it can't even name the kind — pure noise. Pushing the
+	// framework logger to V(1) drops that chatter from the default INFO log while our own
+	// reconcile logs (which use log.FromContext) are unaffected. Our "registered dynamic
+	// component watch" line carries the GVK and stays at INFO.
+	baseLog := mgr.GetLogger().WithName("application")
 	c, err := ctrl.NewControllerManagedBy(mgr).
 		For(&appv1beta1.Application{}).
+		WithLogConstructor(func(req *reconcile.Request) logr.Logger {
+			l := baseLog.V(1)
+			if req != nil {
+				l = l.WithValues("application", req.NamespacedName)
+			}
+			return l
+		}).
 		Build(r)
 	if err != nil {
 		return err
 	}
 	r.controller = c
 	r.cache = mgr.GetCache()
+	r.log = baseLog
 	return nil
 }
 
@@ -343,14 +364,17 @@ func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // Each GVK is watched exactly once for the process lifetime (deduped via watchedKinds):
 // the watch is namespace-agnostic and the map function re-evaluates selectors per event,
 // so one watch per kind serves every Application that uses that kind.
-func (r *ApplicationReconciler) ensureComponentWatches(ctx context.Context, app *appv1beta1.Application) {
+func (r *ApplicationReconciler) ensureComponentWatches(app *appv1beta1.Application) {
 	// No-op when the dynamic-watch machinery isn't wired (e.g. a reconciler constructed
 	// without SetupWithManager, as some tests do). Status aggregation still works; only the
 	// real-time trigger is skipped, falling back to the cache resync.
 	if r.controller == nil || r.cache == nil {
 		return
 	}
-	logger := log.FromContext(ctx)
+	// Use the ungated base logger (INFO), not log.FromContext: the controller's
+	// LogConstructor gates the context logger at V(1) to suppress framework chatter, and
+	// we want the watch-registration line — which carries the GVK — to stay visible.
+	logger := r.log.WithValues("application", client.ObjectKeyFromObject(app))
 	for _, gk := range app.Spec.ComponentGroupKinds {
 		mapping, err := r.Mapper.RESTMapping(schema.GroupKind{
 			Group: appv1beta1.StripVersion(gk.Group),
@@ -375,9 +399,10 @@ func (r *ApplicationReconciler) ensureComponentWatches(ctx context.Context, app 
 			logger.Error(err, "failed to register dynamic component watch", "gvk", gvk.String())
 			continue
 		}
-		// Trace-level (V2): one line per kind at first registration. Noisy on startup —
-		// visible only with --zap-log-level=2 (trace), not at default INFO or debug.
-		logger.V(2).Info("registered dynamic component watch", "gvk", gvk.String())
+		// INFO, once per kind at first registration. This is the useful line: it carries
+		// the GVK (the framework's own "Starting EventSource" log only prints the Go type,
+		// which is always *unstructured.Unstructured here, so it can't tell kinds apart).
+		logger.Info("registered dynamic component watch", "gvk", gvk.String())
 	}
 }
 
