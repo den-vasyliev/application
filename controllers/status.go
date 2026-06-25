@@ -12,7 +12,6 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // Constants defining labels
@@ -117,16 +116,13 @@ func deploymentStatus(u *unstructured.Unstructured) (string, error) {
 	}
 
 	replicaFailure := false
-	availableCondTrue := false
-	availableCondFalse := false
+	available := false
 
 	for _, condition := range deployment.Status.Conditions {
 		switch condition.Type {
 		case appsv1.DeploymentAvailable:
 			if condition.Status == corev1.ConditionTrue {
-				availableCondTrue = true
-			} else {
-				availableCondFalse = true
+				available = true
 			}
 		case appsv1.DeploymentReplicaFailure:
 			if condition.Status == corev1.ConditionTrue {
@@ -137,48 +133,23 @@ func deploymentStatus(u *unstructured.Unstructured) (string, error) {
 
 	scaledToZero := *deployment.Spec.Replicas == 0 && deployment.Status.Replicas == 0
 
-	// "available" means the Deployment is serving. We trust the Available CONDITION when
-	// kube has published it (it respects minAvailable/maxUnavailable), but we ALSO treat a
-	// positive AvailableReplicas count as serving when the condition is not present yet.
-	//
-	// This second clause is the real prod fix: during an HPA scale-up kube updates the
-	// replica counters FIRST and writes the Available condition a beat later. In that
-	// window status.availableReplicas is already > 0 (existing pods serving) but
-	// Conditions[Available] is absent — and gating on the condition alone reported the
-	// Deployment InProgress, flapping the Application to degraded on every scale-up. We
-	// only fall back to the counter when the condition is NOT explicitly False, so a
-	// genuine Available=False (below minAvailable) still reports InProgress.
-	available := availableCondTrue || (!availableCondFalse && deployment.Status.AvailableReplicas > 0)
-
-	// Ready when the Deployment is serving (see above) and there's no ReplicaFailure. We
-	// deliberately do NOT require ReadyReplicas == spec.replicas: during an HPA scale-up
-	// (e.g. 2->3) the spec jumps immediately while the new replica takes its
-	// readiness-probe window to become ready. The existing replicas keep serving, so the
+	// Ready when Kubernetes reports the Deployment Available (>= minAvailable replicas
+	// serving) and there's no ReplicaFailure. We deliberately do NOT require
+	// ReadyReplicas == spec.replicas: during an HPA scale-up (e.g. 2->3) the spec jumps
+	// immediately while the new replica takes its readiness-probe window (up to 90s) to
+	// become ready. The existing replicas keep serving and Available stays True, so the
 	// app is healthy — gating on full desired count would flap Ready->NotReady on every
 	// scale-up and page monitoring with a false "degraded" incident.
 	//
 	// We also do NOT gate Ready on ObservedGeneration == Generation. An HPA scale-up
 	// changes spec.replicas, which bumps metadata.generation immediately; the Deployment
-	// controller only writes status.observedGeneration a moment later. Gating on that skew
-	// would re-introduce the same scale-up flap.
+	// controller only writes status.observedGeneration a moment later. In that window
+	// generation is ahead of observedGeneration while Available is still True — gating on
+	// it would re-introduce the exact scale-up flap this fix exists to prevent. The
+	// Available condition already reflects real serving capacity, so it is sufficient.
 	if !replicaFailure && (scaledToZero || available) {
 		return StatusReady, nil
 	}
-	// Debug: dump the exact inputs that produced InProgress, so we can see WHY a real
-	// Deployment is reported not-ready (replicaFailure? Available=False? nothing available?).
-	ctrllog.Log.V(1).Info("deploymentStatus InProgress",
-		"name", deployment.Name,
-		"specReplicas", *deployment.Spec.Replicas,
-		"statusReplicas", deployment.Status.Replicas,
-		"readyReplicas", deployment.Status.ReadyReplicas,
-		"availableReplicas", deployment.Status.AvailableReplicas,
-		"updatedReplicas", deployment.Status.UpdatedReplicas,
-		"generation", deployment.Generation,
-		"observedGeneration", deployment.Status.ObservedGeneration,
-		"availableCondTrue", availableCondTrue,
-		"availableCondFalse", availableCondFalse,
-		"replicaFailure", replicaFailure,
-		"scaledToZero", scaledToZero)
 	return StatusInProgress, nil
 }
 
@@ -381,16 +352,6 @@ func rolloutStatus(u *unstructured.Unstructured) (string, error) {
 		return StatusUnknown, err
 	}
 	if !found || phase == "" {
-		// phase not (re)computed yet — during a scale-up Argo updates the replica counters
-		// before recomputing status.phase, so there is a window with an empty phase while
-		// the Rollout is still serving. Fall back to the serving signal: availableReplicas>0
-		// -> Ready, mirroring deploymentStatus. Only report InProgress when nothing is
-		// available. Without this the empty-phase window flapped the app to degraded on
-		// every Rollout scale-up.
-		available, _, aerr := unstructured.NestedInt64(u.Object, "status", "availableReplicas")
-		if aerr == nil && available > 0 {
-			return StatusReady, nil
-		}
 		return StatusInProgress, nil
 	}
 	switch phase {

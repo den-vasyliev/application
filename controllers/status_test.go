@@ -88,18 +88,8 @@ var _ = Describe("deploymentStatus", func() {
 		Expect(deploymentStatus(toUnstructured(d))).To(Equal(StatusReady))
 	})
 
-	It("is Ready with replicas available but the Available condition not yet published", func() {
-		// THE PROD FLAP: during an HPA scale-up kube updates availableReplicas first and
-		// writes the Available condition a beat later. 3 replicas are serving with no
-		// condition yet — gating on the condition alone reported InProgress and flapped the
-		// app to degraded on every scale-up. AvailableReplicas>0 means serving -> Ready.
+	It("is InProgress with no conditions and a non-zero spec", func() {
 		d := newDeployment(1, 3, 3, 3, nil)
-		Expect(deploymentStatus(toUnstructured(d))).To(Equal(StatusReady))
-	})
-
-	It("is InProgress with no conditions and nothing available", func() {
-		// No Available condition AND availableReplicas==0 -> genuinely not serving.
-		d := newDeployment(1, 3, 0, 0, nil)
 		Expect(deploymentStatus(toUnstructured(d))).To(Equal(StatusInProgress))
 	})
 })
