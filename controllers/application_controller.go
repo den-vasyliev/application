@@ -125,6 +125,20 @@ func (r *ApplicationReconciler) getNewApplicationStatus(ctx context.Context, app
 		}
 	}
 
+	// Observability: log every component's computed status and the aggregate verdict, so
+	// the reason an Application is/ isn't Ready is visible without guessing. Only the
+	// workloads in workloadKinds drive the Ready condition; others are informational.
+	logger := log.FromContext(ctx)
+	for _, os := range objectStatuses {
+		logger.Info("component status",
+			"kind", os.Kind, "name", os.Name, "status", os.Status,
+			"isWorkload", workloadKinds[os.Kind])
+	}
+	logger.Info("aggregate readiness",
+		"appReady", aggReady,
+		"workloadsReady", fmt.Sprintf("%d/%d", countWorkloadsReady, totalWorkloads),
+		"componentsReady", fmt.Sprintf("%d/%d", countAllReady, len(objectStatuses)))
+
 	newApplicationStatus := app.Status.DeepCopy()
 	newApplicationStatus.ComponentList = appv1beta1.ComponentList{
 		Objects: objectStatuses,

@@ -196,4 +196,67 @@ var _ = Describe("scale-up reconcile (envtest, end-to-end)", func() {
 		Expect(readyOf(st)).To(Equal(corev1.ConditionTrue),
 			"4/5 available should be Ready even if the Available condition is not yet published")
 	})
+
+	// updateDeploymentStatus patches an existing Deployment's status in place.
+	updateDeploymentStatus := func(name string, st appsv1.DeploymentStatus) {
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, d)).To(Succeed())
+		d.Status = st
+		Expect(k8sClient.Status().Update(ctx, d)).To(Succeed())
+	}
+
+	It("REPRO: drives a real 2->3 scale-up transition sequence and asserts Ready never flaps", func() {
+		labels := map[string]string{"app.kubernetes.io/instance": "example-service"}
+		appKey := createApp(labels)
+
+		// Steady state at 2 replicas, healthy.
+		createDeploymentWithStatus("example-service", labels, 2, appsv1.DeploymentStatus{
+			Replicas: 2, ReadyReplicas: 2, AvailableReplicas: 2, UpdatedReplicas: 2, ObservedGeneration: 1,
+			Conditions: []appsv1.DeploymentCondition{
+				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue},
+				{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionTrue, Reason: "NewReplicaSetAvailable"},
+			},
+		})
+		Expect(readyOf(runReconcile(appKey))).To(Equal(corev1.ConditionTrue), "steady 2/2 must be Ready")
+
+		// The HPA bumps spec to 3. Walk the status through the windows kube actually emits.
+		// Each step asserts the Application stays Ready throughout the scale-up.
+		steps := []struct {
+			desc string
+			st   appsv1.DeploymentStatus
+		}{
+			{"spec=3, gen bumped, observedGen still 1, available still 2, Available=True", appsv1.DeploymentStatus{
+				Replicas: 2, ReadyReplicas: 2, AvailableReplicas: 2, UpdatedReplicas: 2, ObservedGeneration: 1,
+				Conditions: []appsv1.DeploymentCondition{{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue}},
+			}},
+			{"Progressing flips to ReplicaSetUpdated, available 2, observedGen catches up to 2", appsv1.DeploymentStatus{
+				Replicas: 3, ReadyReplicas: 2, AvailableReplicas: 2, UpdatedReplicas: 3, ObservedGeneration: 2,
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue},
+					{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionTrue, Reason: "ReplicaSetUpdated"},
+				},
+			}},
+			{"new pod not ready yet: replicas=3 ready=2 available=2, Available=True", appsv1.DeploymentStatus{
+				Replicas: 3, ReadyReplicas: 2, AvailableReplicas: 2, UpdatedReplicas: 3, ObservedGeneration: 2,
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue},
+					{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionTrue, Reason: "ReplicaSetUpdated"},
+				},
+			}},
+			{"new pod ready: 3/3", appsv1.DeploymentStatus{
+				Replicas: 3, ReadyReplicas: 3, AvailableReplicas: 3, UpdatedReplicas: 3, ObservedGeneration: 2,
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue},
+					{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionTrue, Reason: "NewReplicaSetAvailable"},
+				},
+			}},
+		}
+		for _, step := range steps {
+			updateDeploymentStatus("example-service", step.st)
+			st := runReconcile(appKey)
+			By(fmt.Sprintf("[%s] => Ready=%v", step.desc, readyOf(st)))
+			Expect(readyOf(st)).To(Equal(corev1.ConditionTrue),
+				"scale-up step must not degrade the Application: "+step.desc)
+		}
+	})
 })
