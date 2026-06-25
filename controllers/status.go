@@ -12,6 +12,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // Constants defining labels
@@ -163,6 +164,21 @@ func deploymentStatus(u *unstructured.Unstructured) (string, error) {
 	if !replicaFailure && (scaledToZero || available) {
 		return StatusReady, nil
 	}
+	// Debug: dump the exact inputs that produced InProgress, so we can see WHY a real
+	// Deployment is reported not-ready (replicaFailure? Available=False? nothing available?).
+	ctrllog.Log.V(1).Info("deploymentStatus InProgress",
+		"name", deployment.Name,
+		"specReplicas", *deployment.Spec.Replicas,
+		"statusReplicas", deployment.Status.Replicas,
+		"readyReplicas", deployment.Status.ReadyReplicas,
+		"availableReplicas", deployment.Status.AvailableReplicas,
+		"updatedReplicas", deployment.Status.UpdatedReplicas,
+		"generation", deployment.Generation,
+		"observedGeneration", deployment.Status.ObservedGeneration,
+		"availableCondTrue", availableCondTrue,
+		"availableCondFalse", availableCondFalse,
+		"replicaFailure", replicaFailure,
+		"scaledToZero", scaledToZero)
 	return StatusInProgress, nil
 }
 
