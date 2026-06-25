@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-06-25
+
+### Changed
+
+- **deploymentStatus and rolloutStatus revert to trusting Kubernetes' own status
+  strictly.** 1.3.0 had added compensation for scale-up flaps — a Deployment was treated
+  as serving when `availableReplicas>0` even if the `Available` condition was absent or
+  `False`, and a Rollout with an empty `status.phase` fell back to `availableReplicas`.
+  Investigation showed the `AppDegraded`-on-scale-up flap was caused by the workload's own
+  rollout strategy (`maxUnavailable: 0`), which makes kube report `Available=False` on
+  every scale-up by design; setting `maxUnavailable: 1` removes the flap with no controller
+  change. The controller should not second-guess kube's availability verdict, so the
+  compensation is removed: `deploymentStatus` is Ready only when `Available=True` (or
+  scaled to zero) and `rolloutStatus` is phase-only again. The fix for such flaps belongs
+  in the workload's `maxUnavailable`/rollout strategy.
+
+### Added
+
+- `--zap-log-level` (and the other zap flags) are now bound, so log verbosity is
+  controllable at runtime (e.g. `--zap-log-level=debug`).
+
 ## [1.3.0] - 2026-06-25
 
 ### Added
