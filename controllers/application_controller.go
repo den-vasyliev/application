@@ -376,6 +376,14 @@ func (r *ApplicationReconciler) ensureComponentWatches(app *appv1beta1.Applicati
 	// we want the watch-registration line — which carries the GVK — to stay visible.
 	logger := r.log.WithValues("application", client.ObjectKeyFromObject(app))
 	for _, gk := range app.Spec.ComponentGroupKinds {
+		// Only watch kinds that drive the Ready condition (workloadKinds). A real-time watch
+		// on Secret/ConfigMap/ServiceAccount/HPA/etc. would start a cluster-wide informer
+		// (caching e.g. every Secret in memory) and fire reconciles for changes that can't
+		// affect the Application's status. Those components are still tracked in ComponentList
+		// via the cache resync; they just don't get a real-time trigger they don't need.
+		if !workloadKinds[gk.Kind] {
+			continue
+		}
 		mapping, err := r.Mapper.RESTMapping(schema.GroupKind{
 			Group: appv1beta1.StripVersion(gk.Group),
 			Kind:  gk.Kind,

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-06-25
+
+### Changed
+
+- Dynamic component watches are now scoped to the workload kinds that drive the Ready
+  condition (Deployment, StatefulSet, ReplicaSet, ReplicationController, DaemonSet, Job,
+  CronJob, Rollout). Previously the controller started a cluster-wide informer for every
+  declared `componentKind` — including Secret, ConfigMap, ServiceAccount, HPA,
+  NetworkPolicy, PrometheusRule, ServiceMonitor — which cached unnecessary objects (e.g.
+  every Secret) in memory and fired reconciles for changes that can't affect the
+  Application's status. Non-workload components are still tracked in `ComponentList` via
+  the cache resync; they just no longer get a real-time watch they don't need.
+
 ## [1.3.4] - 2026-06-25
 
 ### Changed
