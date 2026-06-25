@@ -98,8 +98,11 @@ func stsStatus(u *unstructured.Unstructured) (string, error) {
 	// gating on the full desired count would flap Ready->NotReady on every scale-up and page
 	// monitoring with a false "degraded" incident. CurrentReplicas reflects what's actually
 	// rolled, so ReadyReplicas == CurrentReplicas means "all running pods are healthy".
-	if sts.Status.ObservedGeneration == sts.Generation &&
-		(scaledToZero || (sts.Status.CurrentReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.CurrentReplicas)) {
+	//
+	// We do NOT gate on ObservedGeneration == Generation: a scale-up bumps generation
+	// immediately while the StatefulSet controller writes observedGeneration a moment later,
+	// and gating on that skew would re-introduce the scale-up flap (see deploymentStatus).
+	if scaledToZero || (sts.Status.CurrentReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.CurrentReplicas) {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil
@@ -137,9 +140,14 @@ func deploymentStatus(u *unstructured.Unstructured) (string, error) {
 	// become ready. The existing replicas keep serving and Available stays True, so the
 	// app is healthy — gating on full desired count would flap Ready->NotReady on every
 	// scale-up and page monitoring with a false "degraded" incident.
-	if deployment.Status.ObservedGeneration == deployment.Generation &&
-		!replicaFailure &&
-		(scaledToZero || available) {
+	//
+	// We also do NOT gate Ready on ObservedGeneration == Generation. An HPA scale-up
+	// changes spec.replicas, which bumps metadata.generation immediately; the Deployment
+	// controller only writes status.observedGeneration a moment later. In that window
+	// generation is ahead of observedGeneration while Available is still True — gating on
+	// it would re-introduce the exact scale-up flap this fix exists to prevent. The
+	// Available condition already reflects real serving capacity, so it is sufficient.
+	if !replicaFailure && (scaledToZero || available) {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil
@@ -169,8 +177,11 @@ func replicasetStatus(u *unstructured.Unstructured) (string, error) {
 	// rather than requiring AvailableReplicas == desired. A scale-up leaves the new replica
 	// pending for its readiness-probe window while existing ones serve; gating on the full
 	// desired count would flap Ready->NotReady on every scale-up and false-page monitoring.
-	if rs.Status.ObservedGeneration == rs.Generation && !replicaFailure &&
-		(scaledToZero || rs.Status.AvailableReplicas > 0) {
+	//
+	// We do NOT gate on ObservedGeneration == Generation: a scale-up bumps generation
+	// immediately while observedGeneration lags a moment, and gating on that skew would
+	// re-introduce the scale-up flap (see deploymentStatus).
+	if !replicaFailure && (scaledToZero || rs.Status.AvailableReplicas > 0) {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil
@@ -190,8 +201,12 @@ func daemonsetStatus(u *unstructured.Unstructured) (string, error) {
 	// controller's own NumberUnavailable counter respects maxUnavailable, so == 0 means the
 	// rollout/coverage is healthy. A DS that schedules onto zero nodes (e.g. nodeSelector
 	// matches nothing) is also Ready.
-	if ds.Status.ObservedGeneration == ds.Generation &&
-		ds.Status.NumberUnavailable == 0 {
+	//
+	// We do NOT gate on ObservedGeneration == Generation: a node join / spec change bumps
+	// generation immediately while observedGeneration lags a moment, and gating on that
+	// skew would re-introduce the scale-up flap (see deploymentStatus). NumberUnavailable
+	// already respects maxUnavailable, so == 0 means coverage is healthy.
+	if ds.Status.NumberUnavailable == 0 {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil
@@ -270,8 +285,11 @@ func replicationControllerStatus(u *unstructured.Unstructured) (string, error) {
 	// Ready when at least one replica is available (serving), rather than requiring
 	// AvailableReplicas == desired — see replicasetStatus: a scale-up must not flap the app
 	// to NotReady while the new replica comes up and existing ones keep serving.
-	if rc.Status.ObservedGeneration == rc.Generation &&
-		(scaledToZero || rc.Status.AvailableReplicas > 0) {
+	//
+	// We do NOT gate on ObservedGeneration == Generation: a scale-up bumps generation
+	// immediately while observedGeneration lags a moment, and gating on that skew would
+	// re-introduce the scale-up flap (see deploymentStatus).
+	if scaledToZero || rc.Status.AvailableReplicas > 0 {
 		return StatusReady, nil
 	}
 	return StatusInProgress, nil

@@ -54,9 +54,29 @@ Each kind uses the signal Kubernetes already publishes for "available":
 | **ReplicationController** | `AvailableReplicas > 0` | no conditions in RC status |
 | **DaemonSet** | `NumberUnavailable == 0` | the DS controller's own counter respects `maxUnavailable`, so a node join doesn't flap |
 
-All keep `ObservedGeneration == Generation` (don't trust stale status), preserve the
-**scaled-to-zero → Ready** case, and still report `InProgress` on genuine failure
-(nothing available / `ReplicaFailure=True` / unavailable pods).
+All preserve the **scaled-to-zero → Ready** case, and still report `InProgress` on
+genuine failure (nothing available / `ReplicaFailure=True` / unavailable pods).
+
+### Amendment (2026-06-25): the `ObservedGeneration` gate was a residual flap
+
+The original fix (commit `25171c3`) still gated `Ready` on
+`Status.ObservedGeneration == Generation` for every kind. That re-introduced the
+**exact** flap it set out to remove, just through a different field:
+
+An HPA scale-up changes `spec.replicas`, which bumps `metadata.generation`
+**immediately**. The workload controller writes `status.observedGeneration` only a
+moment later. In that window `generation` is ahead of `observedGeneration` while the
+`Available` condition is still `True` — and the `ObservedGeneration == Generation`
+clause evaluated to false, so the workload was reported `InProgress` and the
+Application was paged as degraded (`AppDegraded` for `example-service`, observed in production
+productionon a build that *did* contain `25171c3`).
+
+The generation gate was meant to avoid trusting *stale* status, but for a scale-up
+the previous `Available=True` was and remains correct — the gate was rejecting good
+status, not stale status. **The `ObservedGeneration == Generation` clause is removed
+from the Ready predicate of all five kinds.** Genuine failure is already signalled by
+`Available=False` / `ReplicaFailure=True` / unavailable pods, which still gate
+`InProgress` regardless of generation skew.
 
 ### Behavior matrix
 
@@ -92,10 +112,14 @@ All keep `ObservedGeneration == Generation` (don't trust stale status), preserve
 ## Tests
 
 `controllers/status_test.go` — unit specs for all five kinds, each covering a
-scale-up regression, a broken case, and scaled-to-zero. The pre-existing
-`controllers` envtest suite was also repaired so it runs (controller-name collision,
-manager-shutdown assertion, and a stale ownerReference spec that tested removed
-owner-ref mutation).
+scale-up regression, a broken case, and scaled-to-zero. Per the 2026-06-25 amendment,
+every kind also has a spec that reproduces the **generation-skew window**
+(`generation` ahead of `observedGeneration` while `Available=True`) and asserts the
+workload stays `Ready` — this is the case the original specs missed, because the test
+helper hardcoded `ObservedGeneration = Generation` and so never exercised the lag. The
+pre-existing `controllers` envtest suite was also repaired so it runs (controller-name
+collision, manager-shutdown assertion, and a stale ownerReference spec that tested
+removed owner-ref mutation).
 
 ## Deployment
 
