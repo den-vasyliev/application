@@ -58,18 +58,27 @@ type ApplicationReconciler struct {
 func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("application", req.NamespacedName)
 	ctx = log.IntoContext(ctx, logger)
+	// Step-by-step debug trace. Enable with --zap-log-level=debug (V(1)); off by default
+	// so prod stays quiet. Lets you follow exactly what each reconcile does and why.
+	debug := logger.V(1)
+	debug.Info("reconcile: start")
 
 	var app appv1beta1.Application
 	err := r.Get(ctx, req.NamespacedName, &app)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
+			debug.Info("reconcile: application not found, dropping")
 			return ctrl.Result{}, nil
 		}
+		debug.Info("reconcile: get failed", "error", err.Error())
 		return ctrl.Result{}, err
 	}
+	debug.Info("reconcile: fetched application",
+		"generation", app.Generation, "componentKinds", len(app.Spec.ComponentGroupKinds))
 
 	// Application is in the process of being deleted, so no need to do anything.
 	if app.DeletionTimestamp != nil {
+		debug.Info("reconcile: being deleted, skipping")
 		return ctrl.Result{}, nil
 	}
 
@@ -78,15 +87,18 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	r.ensureComponentWatches(ctx, &app)
 
 	resources, errs := r.updateComponents(ctx, &app)
+	debug.Info("reconcile: listed components", "count", len(resources), "listErrors", len(errs))
 	newApplicationStatus := r.getNewApplicationStatus(ctx, &app, resources, &errs)
 
 	newApplicationStatus.ObservedGeneration = app.Generation
 	if equality.Semantic.DeepEqual(newApplicationStatus, &app.Status) {
+		debug.Info("reconcile: status unchanged, no write")
 		if len(errs) > 0 {
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 		return ctrl.Result{}, nil
 	}
+	debug.Info("reconcile: status changed", "componentsReady", newApplicationStatus.ComponentsReady)
 
 	// Stabilization: if transitioning from not-Ready to Ready, wait StabilizationPeriod
 	// to confirm the healthy state persists before writing — prevents flapping on brief recoveries.
@@ -96,11 +108,17 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		notReadySince := notReadySince(&app.Status)
 		waited := time.Since(notReadySince)
 		if waited < r.StabilizationPeriod {
+			debug.Info("reconcile: transitioning to Ready, stabilizing",
+				"waited", waited.String(), "period", r.StabilizationPeriod.String())
 			return ctrl.Result{RequeueAfter: r.StabilizationPeriod - waited}, nil
 		}
 	}
 
+	debug.Info("reconcile: writing status", "componentsReady", newApplicationStatus.ComponentsReady)
 	err = r.updateApplicationStatus(ctx, req.NamespacedName, newApplicationStatus)
+	if err != nil {
+		debug.Info("reconcile: write failed", "error", err.Error())
+	}
 	return ctrl.Result{}, err
 }
 
@@ -125,19 +143,23 @@ func (r *ApplicationReconciler) getNewApplicationStatus(ctx context.Context, app
 		}
 	}
 
-	// Observability: log every component's computed status and the aggregate verdict, so
-	// the reason an Application is/ isn't Ready is visible without guessing. Only the
-	// workloads in workloadKinds drive the Ready condition; others are informational.
-	logger := log.FromContext(ctx)
-	for _, os := range objectStatuses {
-		logger.Info("component status",
-			"kind", os.Kind, "name", os.Name, "status", os.Status,
-			"isWorkload", workloadKinds[os.Kind])
+	// Observability: when the Application is not Ready, log which WORKLOAD components are
+	// InProgress — the components that actually drive the degrade. This is scoped (only
+	// the offending workloads, only when not ready), not a per-component-per-reconcile
+	// firehose, so it stays useful in prod. Non-workload components never degrade the app
+	// and are omitted.
+	if !aggReady {
+		logger := log.FromContext(ctx)
+		for _, os := range objectStatuses {
+			if workloadKinds[os.Kind] && os.Status != StatusReady {
+				logger.Info("workload not ready",
+					"kind", os.Kind, "name", os.Name, "status", os.Status)
+			}
+		}
+		logger.Info("application not ready",
+			"workloadsReady", fmt.Sprintf("%d/%d", countWorkloadsReady, totalWorkloads),
+			"componentsReady", fmt.Sprintf("%d/%d", countAllReady, len(objectStatuses)))
 	}
-	logger.Info("aggregate readiness",
-		"appReady", aggReady,
-		"workloadsReady", fmt.Sprintf("%d/%d", countWorkloadsReady, totalWorkloads),
-		"componentsReady", fmt.Sprintf("%d/%d", countAllReady, len(objectStatuses)))
 
 	newApplicationStatus := app.Status.DeepCopy()
 	newApplicationStatus.ComponentList = appv1beta1.ComponentList{
@@ -243,6 +265,11 @@ func (r *ApplicationReconciler) objectStatuses(ctx context.Context, resources []
 			*errs = append(*errs, err)
 		}
 		os.Status = s
+		// Debug: every resource and its computed status. This is the line that ends
+		// "why is my app degraded" guessing — at --zap-log-level=debug it prints, per
+		// reconcile, exactly what status() returned for each component.
+		logger.V(1).Info("computed component status",
+			"kind", os.Kind, "name", os.Name, "status", s)
 		objectStatuses = append(objectStatuses, os)
 	}
 	sort.Slice(objectStatuses, func(i, j int) bool {
