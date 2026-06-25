@@ -162,7 +162,9 @@ func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context,
 			Kind:  gk.Kind,
 		})
 		if err != nil {
-			logger.Info("NoMappingForGK — skipping", "gk", gk.String(), "error", err)
+			// Demoted to V(1): fires for every unmapped/misspelled component kind on every
+			// reconcile, which floods the default log. Visible with --zap-log-level=debug.
+			logger.V(1).Info("NoMappingForGK — skipping", "gk", gk.String(), "error", err)
 			continue
 		}
 
@@ -373,7 +375,9 @@ func (r *ApplicationReconciler) ensureComponentWatches(ctx context.Context, app 
 			logger.Error(err, "failed to register dynamic component watch", "gvk", gvk.String())
 			continue
 		}
-		logger.Info("registered dynamic component watch", "gvk", gvk.String())
+		// V(1): one line per kind at first registration. Useful but noisy on startup —
+		// visible with --zap-log-level=debug, not at default INFO.
+		logger.V(1).Info("registered dynamic component watch", "gvk", gvk.String())
 	}
 }
 
