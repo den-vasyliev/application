@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.6] - 2026-06-25
+
+### Changed
+
+- Log levels cleaned up:
+  - **info** (default): `registered dynamic component watch` (with GVK) and errors only.
+  - **debug** (`--zap-log-level=debug`): adds an `application status updated` line —
+    `componentsReady: old -> new` — emitted only when an Application's status actually
+    changes, not on every no-op reconcile.
+  - **trace** (`--zap-log-level=2`): the framework's internal `Starting EventSource`
+    chatter (moved here from debug; it can't name the kind, so it's noise).
+
 ## [1.3.5] - 2026-06-25
 
 ### Changed

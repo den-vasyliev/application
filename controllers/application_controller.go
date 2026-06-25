@@ -92,6 +92,16 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
+	// The status changed — log the update at debug (V1) so --zap-log-level=debug shows
+	// which Application reconciled and what changed, without the per-no-op-reconcile noise.
+	// Uses r.log (ungated) so it surfaces at debug even though the controller's framework
+	// logger is gated to V(2). r.log is unset when built without SetupWithManager (tests).
+	if r.log.GetSink() != nil {
+		r.log.V(1).Info("application status updated",
+			"application", req.NamespacedName,
+			"componentsReady", fmt.Sprintf("%s -> %s", app.Status.ComponentsReady, newApplicationStatus.ComponentsReady))
+	}
+
 	// Stabilization: if transitioning from not-Ready to Ready, wait StabilizationPeriod
 	// to confirm the healthy state persists before writing — prevents flapping on brief recoveries.
 	// We use the lastTransitionTime of the current not-Ready condition as the start of the wait,
@@ -329,18 +339,18 @@ func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// (see ensureComponentWatches), because the set of component kinds is not known until
 	// an Application declares them in spec.componentKinds.
 	//
-	// WithLogConstructor gates the framework's own controller logs at V(1): with one
-	// dynamic watch per component kind, controller-runtime emits a "Starting EventSource"
-	// INFO line per Watch() call, and because every dynamic source is an
+	// WithLogConstructor gates the framework's own controller logs at V(2) (trace): with
+	// one dynamic watch per component kind, controller-runtime emits a "Starting
+	// EventSource" line per Watch() call, and because every dynamic source is an
 	// *unstructured.Unstructured it can't even name the kind — pure noise. Pushing the
-	// framework logger to V(1) drops that chatter from the default INFO log while our own
-	// reconcile logs (which use log.FromContext) are unaffected. Our "registered dynamic
-	// component watch" line carries the GVK and stays at INFO.
+	// framework logger to V(2) keeps that chatter out of both the default INFO log and
+	// --zap-log-level=debug; it only appears at --zap-log-level=2. Our own
+	// "registered dynamic component watch" line (via r.log) carries the GVK and stays at INFO.
 	baseLog := mgr.GetLogger().WithName("application")
 	c, err := ctrl.NewControllerManagedBy(mgr).
 		For(&appv1beta1.Application{}).
 		WithLogConstructor(func(req *reconcile.Request) logr.Logger {
-			l := baseLog.V(1)
+			l := baseLog.V(2)
 			if req != nil {
 				l = l.WithValues("application", req.NamespacedName)
 			}
