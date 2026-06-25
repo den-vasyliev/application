@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-06-25
+
+### Fixed
+
+- **The actual prod scale-up flap: `deploymentStatus` gated "serving" on the
+  `Available` *condition* alone, ignoring `availableReplicas`.** During an HPA scale-up
+  kube updates `status.availableReplicas` first and writes the `Available` condition a
+  beat later. In that window the Deployment had replicas serving (`availableReplicas>0`)
+  but no `Available` condition yet, so the controller read it as not-available and
+  reported `InProgress` — flapping the Application to degraded on every scale-up. This is
+  the flap that survived 1.2.0 (1.2.0 fixed the replica-count and generation-skew gates
+  but still trusted the condition exclusively). A Deployment is now treated as serving if
+  the `Available` condition is `True` **or** `availableReplicas>0` and the condition is
+  not explicitly `False`; a genuine `Available=False` still reports `InProgress`.
+  The other workload kinds (StatefulSet, ReplicaSet, ReplicationController, DaemonSet)
+  already decide on replica counters rather than the condition, so Deployment was the
+  only affected kind.
+
+  Crucially, this is covered by a new **envtest** spec (`scaleup_envtest_test.go`) that
+  drives a real Deployment through a real apiserver with the `Available` condition
+  absent — the prod state. It fails on the pre-fix code and passes on the fix. The prior
+  unit tests missed the bug because they always set an `Available` condition explicitly,
+  so the real "condition-not-yet-published" window was never exercised.
+
 ## [1.2.0] - 2026-06-25
 
 ### Fixed

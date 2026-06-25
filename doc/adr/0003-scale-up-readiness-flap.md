@@ -113,6 +113,38 @@ Rollout reads `Ready`, not `InProgress`.
 Note: `Error` and `Unknown` were in the original switch but Argo Rollouts never emits
 them as `phase` values; they are kept defensively (`Error` → `InProgress`).
 
+### Amendment (2026-06-25, v1.2.1): Deployment trusted the `Available` *condition* alone
+
+Even after the above amendments, production kept paging on Deployment scale-ups. The
+remaining bug: `deploymentStatus` decided "is this serving?" purely from
+`Conditions[Available]`, ignoring `status.availableReplicas`.
+
+During an HPA scale-up the kube Deployment controller updates the **replica counters
+first** (`availableReplicas` already reflects the existing serving pods) and writes the
+`Available` **condition a beat later**. In that window:
+
+```
+status.availableReplicas = 4   (serving)
+status.conditions[Available] = <absent>
+```
+
+`deploymentStatus` saw no `Available` condition → `available=false` → `InProgress`, and
+the Application flapped to degraded on every scale-up — exactly the incident this ADR
+set out to kill, on the kind production runs most.
+
+**A Deployment is now treated as serving if `Available` is `True`, OR
+`availableReplicas>0` and the condition is not explicitly `False`.** A genuine
+`Available=False` (below minAvailable) still reports `InProgress`. The other workload
+kinds already decide on replica counters, not the condition, so Deployment was the only
+affected kind.
+
+Why the earlier "all green" test runs missed it: every *unit* test built the Deployment
+struct with an `Available` condition already set, so the condition-not-yet-published
+window never occurred in tests. This amendment adds an **envtest** spec
+(`controllers/scaleup_envtest_test.go`) that creates a real Deployment in a real
+apiserver with the `Available` condition **absent** and asserts the Application status
+the controller actually writes. It fails on the pre-fix code and passes on the fix.
+
 ### Behavior matrix
 
 | Scenario | Before | After |
