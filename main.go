@@ -44,9 +44,14 @@ func main() {
 	flag.Int64Var(&stabilizationPeriod, "stabilization-period", 30, "Seconds to wait before transitioning an Application to Ready, to avoid flapping.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller kube-app-manager. Enabling this will ensure there is only one active controller kube-app-manager.")
+
+	// Bind the zap logging flags (--zap-log-level, --zap-devel, --zap-encoder, ...) so log
+	// verbosity is controllable at runtime. --zap-log-level=debug enables the V(1)
+	// step-by-step reconcile trace and the per-component computed-status lines.
+	opts := zap.Options{Development: true}
+	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	opts := zap.Options{Development: true}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	syncPeriodD := time.Duration(int64(time.Second) * syncPeriod)

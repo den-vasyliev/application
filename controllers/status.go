@@ -365,6 +365,16 @@ func rolloutStatus(u *unstructured.Unstructured) (string, error) {
 		return StatusUnknown, err
 	}
 	if !found || phase == "" {
+		// phase not (re)computed yet — during a scale-up Argo updates the replica counters
+		// before recomputing status.phase, so there is a window with an empty phase while
+		// the Rollout is still serving. Fall back to the serving signal: availableReplicas>0
+		// -> Ready, mirroring deploymentStatus. Only report InProgress when nothing is
+		// available. Without this the empty-phase window flapped the app to degraded on
+		// every Rollout scale-up.
+		available, _, aerr := unstructured.NestedInt64(u.Object, "status", "availableReplicas")
+		if aerr == nil && available > 0 {
+			return StatusReady, nil
+		}
 		return StatusInProgress, nil
 	}
 	switch phase {
