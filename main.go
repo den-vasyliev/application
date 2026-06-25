@@ -46,8 +46,7 @@ func main() {
 		"Enable leader election for controller kube-app-manager. Enabling this will ensure there is only one active controller kube-app-manager.")
 
 	// Bind the zap logging flags (--zap-log-level, --zap-devel, --zap-encoder, ...) so log
-	// verbosity is controllable at runtime. --zap-log-level=debug enables the V(1)
-	// step-by-step reconcile trace and the per-component computed-status lines.
+	// verbosity is controllable at runtime.
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
