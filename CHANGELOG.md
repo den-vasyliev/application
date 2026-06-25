@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-06-25
+
+### Changed
+
+- Demoted the `registered dynamic component watch` and `NoMappingForGK — skipping` log
+  lines to V(1) so they no longer flood the default INFO log. They are visible with
+  `--zap-log-level=debug`.
+
 ## [1.3.1] - 2026-06-25
 
 ### Changed
