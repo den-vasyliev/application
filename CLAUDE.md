@@ -51,9 +51,11 @@ Test assets (etcd, kube-apiserver, kubectl) must be present at the paths set by 
 
 - `application_controller.go` — `ApplicationReconciler.Reconcile(ctx, req)` is the main loop:
   1. Fetch the `Application` resource
-  2. Call `updateComponents()` to list all Kubernetes resources matching the Application's label selectors
-  3. Call `getNewApplicationStatus()` to aggregate component health into application-level conditions
-  4. Patch the `Application` status
+  2. Call `ensureComponentWatches()` to register a real-time watch per `spec.componentKinds` GVK (deduped, dynamic — see ADR-0004), so component status changes trigger a reconcile within seconds instead of waiting for the `--sync-period` resync
+  3. Call `updateComponents()` to list all Kubernetes resources matching the Application's label selectors
+  4. Call `getNewApplicationStatus()` to aggregate component health into application-level conditions
+  5. Patch the `Application` status
+  - `SetupWithManager` uses `builder.Build` (not `.Complete`) to keep the controller + cache handles needed for the dynamic watches; `applicationsForComponent` maps a changed component → matching Applications.
 
 - `status.go` — `status()` dispatches per-resource readiness computation. Handled types:
   - Standard k8s: Deployment, StatefulSet, ReplicaSet, DaemonSet, Pod, Service, PVC, PodDisruptionBudget, ReplicationController, Job, CronJob

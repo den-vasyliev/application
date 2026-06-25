@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -21,8 +23,13 @@ import (
 	"k8s.io/client-go/util/retry"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	appv1beta1 "sigs.k8s.io/application/api/v1beta1"
 )
@@ -33,6 +40,15 @@ type ApplicationReconciler struct {
 	Mapper              meta.RESTMapper
 	Scheme              *runtime.Scheme
 	StabilizationPeriod time.Duration
+
+	// controller is the handle returned by builder.Build, used to register watches on
+	// component kinds dynamically at runtime (see ensureComponentWatches).
+	controller controller.Controller
+	// cache feeds the dynamically registered component informers.
+	cache cache.Cache
+	// watchedKinds dedups dynamic watches so each component GVK is watched exactly once
+	// for the lifetime of the process.
+	watchedKinds sync.Map
 }
 
 // +kubebuilder:rbac:groups=app.k8s.io,resources=applications,verbs=get;list;watch;create;update;patch;delete
@@ -56,6 +72,10 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if app.DeletionTimestamp != nil {
 		return ctrl.Result{}, nil
 	}
+
+	// Register real-time watches for this Application's component kinds (idempotent per
+	// GVK), so component status changes trigger a reconcile without waiting for the resync.
+	r.ensureComponentWatches(ctx, &app)
 
 	resources, errs := r.updateComponents(ctx, &app)
 	newApplicationStatus := r.getNewApplicationStatus(ctx, &app, resources, &errs)
@@ -298,7 +318,90 @@ func (r *ApplicationReconciler) updateApplicationStatus(ctx context.Context, nn 
 }
 
 func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	// Build (not Complete) so we keep the Controller handle. We register watches on the
+	// Application here; component-kind watches are added lazily at runtime in Reconcile
+	// (see ensureComponentWatches), because the set of component kinds is not known until
+	// an Application declares them in spec.componentKinds.
+	c, err := ctrl.NewControllerManagedBy(mgr).
 		For(&appv1beta1.Application{}).
-		Complete(r)
+		Build(r)
+	if err != nil {
+		return err
+	}
+	r.controller = c
+	r.cache = mgr.GetCache()
+	return nil
+}
+
+// ensureComponentWatches registers a dynamic watch for each of the Application's
+// component kinds, so a change to any matched component (e.g. a Deployment's status
+// updating during a scale-up) enqueues a reconcile of the owning Application in real
+// time, rather than waiting for the cache resync (--sync-period, default 120s).
+//
+// Each GVK is watched exactly once for the process lifetime (deduped via watchedKinds):
+// the watch is namespace-agnostic and the map function re-evaluates selectors per event,
+// so one watch per kind serves every Application that uses that kind.
+func (r *ApplicationReconciler) ensureComponentWatches(ctx context.Context, app *appv1beta1.Application) {
+	// No-op when the dynamic-watch machinery isn't wired (e.g. a reconciler constructed
+	// without SetupWithManager, as some tests do). Status aggregation still works; only the
+	// real-time trigger is skipped, falling back to the cache resync.
+	if r.controller == nil || r.cache == nil {
+		return
+	}
+	logger := log.FromContext(ctx)
+	for _, gk := range app.Spec.ComponentGroupKinds {
+		mapping, err := r.Mapper.RESTMapping(schema.GroupKind{
+			Group: appv1beta1.StripVersion(gk.Group),
+			Kind:  gk.Kind,
+		})
+		if err != nil {
+			// Kind not installed in the cluster — skip; fetchComponentListResources logs it too.
+			continue
+		}
+		gvk := mapping.GroupVersionKind
+		if _, loaded := r.watchedKinds.LoadOrStore(gvk, true); loaded {
+			continue // already watching this kind
+		}
+
+		u := &unstructured.Unstructured{}
+		u.SetGroupVersionKind(gvk)
+		src := source.Kind(r.cache, client.Object(u),
+			handler.EnqueueRequestsFromMapFunc(r.applicationsForComponent))
+		if err := r.controller.Watch(src); err != nil {
+			// Roll back the dedup entry so a later reconcile can retry the watch.
+			r.watchedKinds.Delete(gvk)
+			logger.Error(err, "failed to register dynamic component watch", "gvk", gvk.String())
+			continue
+		}
+		logger.Info("registered dynamic component watch", "gvk", gvk.String())
+	}
+}
+
+// applicationsForComponent maps a changed component object to reconcile requests for
+// every Application in the component's namespace whose selector matches the component's
+// labels. This is the component -> Application fan-out that drives real-time status
+// updates.
+func (r *ApplicationReconciler) applicationsForComponent(ctx context.Context, obj client.Object) []reconcile.Request {
+	var apps appv1beta1.ApplicationList
+	if err := r.List(ctx, &apps, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	compLabels := labels.Set(obj.GetLabels())
+	var reqs []reconcile.Request
+	for i := range apps.Items {
+		app := &apps.Items[i]
+		if app.Spec.Selector == nil {
+			continue
+		}
+		sel, err := metav1.LabelSelectorAsSelector(app.Spec.Selector)
+		if err != nil {
+			continue
+		}
+		if sel.Matches(compLabels) {
+			reqs = append(reqs, reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: app.Namespace, Name: app.Name},
+			})
+		}
+	}
+	return reqs
 }

@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-25
+
+### Added
+
+- **Real-time reconcile on component changes via dynamic watches.** The controller now
+  registers a watch for each Application's `spec.componentKinds` at runtime (deduped per
+  GVK), so a change to a matched component — a Deployment's status during a scale-up, a
+  pod failing, a workload recovering — enqueues a reconcile of the owning Application
+  within seconds, instead of waiting up to 120s for the cache resync (`--sync-period`).
+  Component kinds are resolved dynamically from each Application's config (not a static
+  list), so arbitrary CRD kinds such as Argo `Rollout` are watched the same way as
+  built-in workloads. A healthy scale-up still produces no status change (see ADR-0003);
+  the faster trigger matters for genuine degrades/recoveries. The resync remains as a
+  backstop. See [ADR-0004](doc/adr/0004-dynamic-component-watches.md). Proven by an
+  envtest that sets `SyncPeriod` to one hour and asserts a component-status change still
+  reconciles the Application within seconds.
+
 ## [1.2.1] - 2026-06-25
 
 ### Fixed
