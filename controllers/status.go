@@ -332,8 +332,21 @@ func cronJobStatus(u *unstructured.Unstructured) (string, error) {
 	return StatusReady, nil
 }
 
-// Argo Rollout — uses status.phase rather than standard conditions
+// Argo Rollout — uses status.phase rather than standard conditions.
 func rolloutStatus(u *unstructured.Unstructured) (string, error) {
+	// Scaled to zero -> Ready, regardless of phase. A Rollout with spec.replicas=0 runs
+	// nothing, so a Degraded/InvalidSpec phase on it is noise nobody acts on (e.g. a
+	// parked rollout with an incomplete strategy). The error only becomes real when it is
+	// scaled back up, at which point the phase reflects it. Mirrors the scaled-to-zero ->
+	// Ready treatment of the other workload kinds.
+	replicas, found, err := unstructured.NestedInt64(u.Object, "spec", "replicas")
+	if err != nil {
+		return StatusUnknown, err
+	}
+	if found && replicas == 0 {
+		return StatusReady, nil
+	}
+
 	phase, found, err := unstructured.NestedString(u.Object, "status", "phase")
 	if err != nil {
 		return StatusUnknown, err
@@ -342,9 +355,14 @@ func rolloutStatus(u *unstructured.Unstructured) (string, error) {
 		return StatusInProgress, nil
 	}
 	switch phase {
-	case "Healthy", "Inactive":
+	// Progressing/Paused are NOT degradation: an HPA scale-up, a canary/blue-green step,
+	// or a healthy pause all sit in these phases while the Rollout keeps serving (its
+	// Available condition stays True). Treating them as InProgress flapped the Application
+	// to degraded on every scale-up — the same false positive ADR-0003 fixed for
+	// Deployments. Only Degraded/Error (a real failure) report InProgress.
+	case "Healthy", "Inactive", "Progressing", "Paused":
 		return StatusReady, nil
-	case "Degraded", "Progressing", "Paused", "Error", "Unknown":
+	case "Degraded", "Error":
 		return StatusInProgress, nil
 	default:
 		return StatusUnknown, nil

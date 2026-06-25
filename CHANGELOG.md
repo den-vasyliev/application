@@ -29,6 +29,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   genuine failure is still caught by `Available=False` / `ReplicaFailure` / unavailable
   pods. Regression specs now reproduce the generation-skew window for every kind.
 
+- **Argo Rollouts no longer flap on scale-up / canary steps.** `rolloutStatus` mapped
+  `status.phase: Progressing` and `Paused` to `InProgress`, so a Rollout scaling up (HPA
+  or replica bump) or stepping through a canary/blue-green rollout degraded its
+  Application even while it kept serving (`Available` condition `True`) — the same false
+  positive as the Deployment case, on the kind production actually runs on (~27 Rollouts).
+  `Progressing` and `Paused` now map to `Ready`; only `Degraded`/`Error` report
+  `InProgress`. Additionally, a **scaled-to-zero Rollout** (`spec.replicas=0`) is now
+  `Ready` regardless of phase, so a parked Rollout with a `Degraded`/`InvalidSpec` phase
+  (e.g. `example-parked-rollout`) doesn't degrade its app. Adds the first `rolloutStatus` unit
+  specs (the kind previously had none). See [ADR-0003](doc/adr/0003-scale-up-readiness-flap.md).
+
 ### Changed
 
 - Test suites are envtest-only: removed the `UseExistingCluster` option from both the

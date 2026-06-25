@@ -65,7 +65,7 @@ Test assets (etcd, kube-apiserver, kubectl) must be present at the paths set by 
     - **DaemonSet**: `NumberUnavailable == 0` (respects `maxUnavailable`, so a node join doesn't flap)
     - All preserve scaled-to-zero (`spec.replicas=0`) → Ready, and still report `InProgress` on genuine failure (nothing available / `ReplicaFailure` / unavailable pods)
   - **CronJob**: Ready unless `spec.suspend=true` — schedule/success history does not affect app health
-  - **Argo Rollout** (`Rollout.argoproj.io`): reads `status.phase` — `Healthy`/`Inactive`→Ready, `Degraded`/`Progressing`/`Paused`/`Error`→InProgress
+  - **Argo Rollout** (`Rollout.argoproj.io`): reads `status.phase` — `Healthy`/`Inactive`/`Progressing`/`Paused`→Ready (a scaling/canary/paused Rollout is still serving), `Degraded`/`Error`→InProgress. Scaled-to-zero (`spec.replicas=0`) → Ready regardless of phase, so a parked Rollout with a `Degraded`/`InvalidSpec` phase doesn't degrade its app (see ADR-0003)
   - Everything else: `statusFromStandardConditions` (checks `Ready`/`InProgress` condition types)
 
 - `condition.go` — helpers for setting/clearing `ApplicationCondition` entries on the status
