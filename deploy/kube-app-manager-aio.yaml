@@ -755,20 +755,32 @@ spec:
         control-plane: kube-app-manager
         controller-tools.k8s.io: "1.0"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - args:
         - --secure-listen-address=0.0.0.0:8443
         - --upstream=http://127.0.0.1:8080/
         - --logtostderr=true
-        - --v=10
+        - --v=3
         image: gcr.io/kubebuilder/kube-rbac-proxy:v0.4.1
         name: kube-rbac-proxy
         ports:
         - containerPort: 8443
           name: https
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
       - args:
         - --metrics-addr=127.0.0.1:8080
-        image: ghcr.io/den-vasyliev/application:1.1.4
+        image: ghcr.io/den-vasyliev/application:1.3.6
         imagePullPolicy: IfNotPresent
         name: kube-app-manager
         resources:
@@ -778,4 +790,10 @@ spec:
           requests:
             cpu: 100m
             memory: 20Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
       terminationGracePeriodSeconds: 10
