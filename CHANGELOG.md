@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the `golang.org/x/{net,oauth2,sys}` dependencies to their latest releases;
+  this raises the minimum Go toolchain to 1.25 (`go.mod` and the Dockerfile builder).
+- Added a hardened `securityContext` (pod and container) to the deployed manifest:
+  `runAsNonRoot`, non-root uid/gid, `seccompProfile: RuntimeDefault`,
+  `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, and dropped
+  capabilities.
+- Pinned the distroless and chainguard base images by digest for reproducible builds.
+- `--metrics-addr` now defaults to `127.0.0.1:8080` and `--enable-leader-election`
+  defaults to `true`.
+- Aligned the AIO manifest image and `VERSION` with the current release (1.3.6).
+
+### Fixed
+
+- `make test` now installs envtest assets via `setup-envtest`, fixing the build on
+  arm64 (Apple Silicon / linux-arm64).
+
 ## [1.3.6] - 2026-06-25
 
 ### Changed
