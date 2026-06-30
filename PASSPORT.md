@@ -8,7 +8,7 @@
 | Repository | https://github.com/den-vasyliev/application |
 | Go module | sigs.k8s.io/application |
 | Registry | ghcr.io/den-vasyliev/application |
-| Version (git describe) | v1.3.6 |
+| Version (git describe) | v1.3.7 |
 | Owner | den-vasyliev (den.vasyliev@gmail.com) |
 | License | Apache-2.0 |
 

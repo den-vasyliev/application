@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.7] - 2026-06-30
+
 ### Changed
 
 - Updated the `golang.org/x/{net,oauth2,sys}` dependencies to their latest releases;
@@ -17,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pinned the distroless and chainguard base images by digest for reproducible builds.
 - `--metrics-addr` now defaults to `127.0.0.1:8080` and `--enable-leader-election`
   defaults to `true`.
-- Aligned the AIO manifest image and `VERSION` with the current release (1.3.6).
+- Aligned the AIO manifest image and `VERSION` with the current release.
 
 ### Fixed
 
