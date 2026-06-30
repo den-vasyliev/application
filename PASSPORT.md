@@ -81,3 +81,20 @@ SBOM: CycloneDX 1.6 (syft), Go ecosystem, 63 components. Scan: trivy (`go.mod`).
 | Go (go.mod) | 0 | 0 | 0 | 0 | 0 |
 
 No known vulnerabilities.
+
+## 7. Security Audit Status
+
+| Field | Value |
+|---|---|
+| Last audit | 2026-06-30 (against v1.3.6) |
+| Method | SBOM (syft) + dependency scan (trivy); RBAC, container, and network-surface review |
+| Result | All findings resolved or accepted; **0 open** |
+| Open critical/high | 0 |
+| Dependency scan | 0 vulnerabilities (see §6) |
+| Report | `AUDIT.md` (closure summary) |
+
+Remediation summary (no sensitive detail): dependencies updated and the Go toolchain
+raised to 1.25 (0 vulnerabilities); a hardened pod/container `securityContext` added to
+the deployed manifest; base images pinned by digest; metrics bound to loopback by default
+and leader election enabled by default; deployed image and `VERSION` aligned with the
+released source.
