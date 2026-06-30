@@ -780,7 +780,7 @@ spec:
             - ALL
       - args:
         - --metrics-addr=127.0.0.1:8080
-        image: ghcr.io/den-vasyliev/application:1.3.7
+        image: ghcr.io/den-vasyliev/application:1.3.8
         imagePullPolicy: IfNotPresent
         name: kube-app-manager
         resources:

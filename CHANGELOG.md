@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.8] - 2026-06-30
+
+### Fixed
+
+- Reverted the `--enable-leader-election` default back to `false` (it was changed to
+  `true` in 1.3.7). Enabling it by default required lease RBAC that the shipped
+  single-replica deployment did not have, causing the manager to fail on startup.
+  Leader election remains available via the flag for multi-replica deployments.
+
 ## [1.3.7] - 2026-06-30
 
 ### Changed

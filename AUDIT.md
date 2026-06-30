@@ -36,7 +36,7 @@ Resolved in the hardening change set (see `CHANGELOG.md`):
   non-root uid/gid, `RuntimeDefault` seccomp, no privilege escalation, read-only root
   filesystem, all capabilities dropped).
 - **Base images** pinned by digest for reproducible builds.
-- **Defaults** hardened: metrics bound to loopback; leader election enabled.
+- **Defaults** hardened: metrics bound to loopback.
 - **Artifact currency**: deployed image and `VERSION` aligned with the released source;
   sidecar log verbosity reduced.
 

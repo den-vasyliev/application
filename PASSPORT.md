@@ -8,7 +8,7 @@
 | Repository | https://github.com/den-vasyliev/application |
 | Go module | sigs.k8s.io/application |
 | Registry | ghcr.io/den-vasyliev/application |
-| Version (git describe) | v1.3.7 |
+| Version (git describe) | v1.3.8 |
 | Owner | den-vasyliev (den.vasyliev@gmail.com) |
 | License | Apache-2.0 |
 
@@ -95,6 +95,5 @@ No known vulnerabilities.
 
 Remediation summary (no sensitive detail): dependencies updated and the Go toolchain
 raised to 1.25 (0 vulnerabilities); a hardened pod/container `securityContext` added to
-the deployed manifest; base images pinned by digest; metrics bound to loopback by default
-and leader election enabled by default; deployed image and `VERSION` aligned with the
-released source.
+the deployed manifest; base images pinned by digest; metrics bound to loopback by
+default; deployed image and `VERSION` aligned with the released source.
