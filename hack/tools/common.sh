@@ -7,29 +7,14 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-arch=amd64
-os="unknown"
+# Detect OS and architecture. `go env` is authoritative and works on every
+# platform Go supports (including Apple Silicon / linux-arm64), unlike the old
+# hardcoded `arch=amd64`.
+os=$(go env GOOS)
+arch=$(go env GOARCH)
 
-if [[ "$OSTYPE" == "linux-gnu" ]]; then
-  os="linux"
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-  os="darwin"
-fi
-
-if [[ "$os" == "unknown" ]]; then
-  echo "OS '$OSTYPE' not supported. Aborting." >&2
-  exit 1
-fi
-
-go_workspace=''
-for p in ${GOPATH//:/ }; do
-  if [[ $PWD/ = $p/* ]]; then
-    go_workspace=$p
-  fi
-done
-
-if [ -z $go_workspace ]; then
-  echo 'Current directory is not in $GOPATH' >&2
+if [[ "$os" != "linux" && "$os" != "darwin" ]]; then
+  echo "OS '$os' not supported. Aborting." >&2
   exit 1
 fi
 
