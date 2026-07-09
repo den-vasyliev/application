@@ -6,6 +6,7 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -13,6 +14,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	appv1beta1 "sigs.k8s.io/application/api/v1beta1"
 	"sigs.k8s.io/application/controllers"
+	"sigs.k8s.io/application/push"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -23,7 +25,12 @@ import (
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+	// version is overridable at build time via -ldflags "-X main.version=...".
+	version = "dev"
 )
+
+// appVersion returns the controller version reported to triage in the push hello frame.
+func appVersion() string { return version }
 
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
@@ -38,12 +45,25 @@ func main() {
 	var syncPeriod int64
 	var stabilizationPeriod int64
 	var enableLeaderElection bool
+	var pushEndpoint, clusterName, pushToken, pushTokenFile, pushNamespaces string
+	var pushHeartbeat int64
+	var pushInsecure bool
 	flag.StringVar(&namespace, "namespace", "", "Namespace within which CRD controller is running.")
 	flag.StringVar(&metricsAddr, "metrics-addr", "127.0.0.1:8080", "The address the metric endpoint binds to. Defaults to loopback; expose via an authenticating proxy (e.g. kube-rbac-proxy) rather than binding to all interfaces.")
 	flag.Int64Var(&syncPeriod, "sync-period", 120, "Sync every sync-period seconds.")
 	flag.Int64Var(&stabilizationPeriod, "stabilization-period", 30, "Seconds to wait before transitioning an Application to Ready, to avoid flapping.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller kube-app-manager. Enabling this will ensure there is only one active controller kube-app-manager.")
+
+	// Push mode (ADR-0005): stream Applications + Warning events to a triage agent
+	// over an outbound WebSocket. Off unless --push-endpoint is set.
+	flag.StringVar(&pushEndpoint, "push-endpoint", "", "Triage agent WebSocket URL (wss://host/v1/cluster-agent/ws). Empty disables push mode.")
+	flag.StringVar(&clusterName, "cluster-name", "", "Cluster identifier stamped into pushed events. Required when --push-endpoint is set.")
+	flag.StringVar(&pushToken, "push-token", "", "Bearer token for the triage agent (prefer --push-token-file).")
+	flag.StringVar(&pushTokenFile, "push-token-file", "", "Path to a file containing the Bearer token.")
+	flag.StringVar(&pushNamespaces, "push-namespaces", "", "Comma-separated namespaces to push; empty pushes all.")
+	flag.Int64Var(&pushHeartbeat, "push-heartbeat", 20, "Heartbeat interval in seconds.")
+	flag.BoolVar(&pushInsecure, "push-insecure-skip-verify", false, "Skip TLS verification for --push-endpoint (dev only).")
 
 	// Bind the zap logging flags (--zap-log-level, --zap-devel, --zap-encoder, ...) so log
 	// verbosity is controllable at runtime.
@@ -81,6 +101,39 @@ func main() {
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
+
+	// Push mode: stream Applications + Warning events to a triage agent (ADR-0005).
+	if pushEndpoint != "" {
+		if clusterName == "" {
+			setupLog.Error(nil, "--cluster-name is required when --push-endpoint is set")
+			os.Exit(1)
+		}
+		if pushToken == "" && pushTokenFile == "" {
+			setupLog.Error(nil, "a token is required: set --push-token or --push-token-file")
+			os.Exit(1)
+		}
+		var nsList []string
+		if pushNamespaces != "" {
+			nsList = strings.Split(pushNamespaces, ",")
+		} else if namespace != "" {
+			nsList = []string{namespace}
+		}
+		pusher := push.New(push.Options{
+			Endpoint:     pushEndpoint,
+			ClusterName:  clusterName,
+			Token:        pushToken,
+			TokenFile:    pushTokenFile,
+			Namespaces:   nsList,
+			AgentVersion: appVersion(),
+			Heartbeat:    time.Duration(pushHeartbeat) * time.Second,
+			InsecureTLS:  pushInsecure,
+		}, mgr, ctrl.Log)
+		if err := mgr.Add(pusher); err != nil {
+			setupLog.Error(err, "unable to add push runnable")
+			os.Exit(1)
+		}
+		setupLog.Info("push mode enabled", "endpoint", pushEndpoint, "cluster", clusterName, "namespaces", nsList)
+	}
 
 	setupLog.Info("starting kube-app-manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
