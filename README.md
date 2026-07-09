@@ -5,22 +5,19 @@
 A Kubernetes controller for the `Application` custom resource (`app.k8s.io/v1beta1`).
 It:
 
-- **Groups related workloads** into one `Application` — Deployments, StatefulSets,
-  Services, Argo Rollouts, Jobs, and more — selected by labels and component kinds.
+- **Groups related workloads** into one `Application` (Deployments, StatefulSets,
+  Services, Argo Rollouts, Jobs, and more), selected by labels and component kinds.
 - **Aggregates their health** into a single `Ready` status, with anti-flap
   semantics: a workload counts as healthy while it is serving, not only at full
   desired count, so scale-ups and rolling updates don't churn the status.
-- Optionally **[pushes to a triage agent](#push-mode)** over an outbound WebSocket,
-  so clusters with no reachable API can still report their state.
+- Optionally **[pushes its state out](#push-mode)** over a WebSocket, so a cluster
+  with no reachable API can still report to an external collector.
 
 ## Install
 
 ```bash
 helm install app charts/app-controller -n application-system --create-namespace
 ```
-
-The chart bundles the CRD and has no `kube-rbac-proxy` sidecar; metrics are off by
-default (`--metrics-addr=0`).
 
 ## Use
 
@@ -44,8 +41,8 @@ sets the Application's `Ready` condition from their combined health.
 ### Component readiness
 
 Scalable workloads are Ready when they are **serving**, not when at full desired
-count — an in-progress HPA scale-up or rolling update does not flap the Application
-to `InProgress`. Scaled to zero (`spec.replicas: 0`) is Ready.
+count, so an in-progress HPA scale-up or rolling update does not flap the
+Application to `InProgress`. Scaled to zero (`spec.replicas: 0`) is Ready.
 
 | Group | Kind | Ready when |
 |-------|------|------------|
@@ -65,21 +62,20 @@ to `InProgress`. Scaled to zero (`spec.replicas: 0`) is Ready.
 
 ## Push mode
 
-For a cluster a triage agent cannot reach — behind a firewall or NAT — the
-controller dials **out** to the agent and streams its Applications, status changes,
-and Kubernetes Warning events over a WebSocket.
+When a cluster's API is not reachable from where you monitor it (behind a firewall
+or NAT), the controller can dial **out** to a WebSocket endpoint and stream its
+Applications, status changes, and Kubernetes Warning events to it.
 
 ```bash
 helm upgrade --install app charts/app-controller -n application-system \
   --set push.enabled=true \
-  --set push.endpoint=wss://<triage-host>/events/ws \
+  --set push.endpoint=wss://<host>/events/ws \
   --set push.clusterName=<cluster> \
   --set push.token=<bearer-token>
 ```
 
-The endpoint must be `wss://` — a plaintext token is refused at startup. See the
-chart [values](charts/app-controller/values.yaml) for all push settings, and
-[ADR-0005](doc/adr/0005-outbound-push-mode.md) for the design.
+See the chart [values](charts/app-controller/values.yaml) for the full set of push
+options.
 
 ## Development
 
@@ -90,7 +86,9 @@ make manifests                 # regenerate the CRD
 make generate                  # manifests + sync CRD into the chart
 
 # Run against the current kubeconfig:
-./bin/app-controller --metrics-addr=0
+./bin/app-controller
 ```
 
-Release notes: [CHANGELOG.md](CHANGELOG.md). Push a `v*` tag to cut a release.
+Pushing a `v*` tag builds and publishes the container image at that version to
+GHCR (see `.github/workflows/ci.yaml`). Changes are recorded in
+[CHANGELOG.md](CHANGELOG.md).
