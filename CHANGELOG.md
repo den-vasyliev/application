@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-07-09
+
 ### Security
 
 - Push mode now rejects a non-`wss://` `--push-endpoint` at startup so the bearer
@@ -13,6 +15,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   allowed only with the explicit `--push-allow-plaintext` flag, which is separate
   from `--push-insecure-skip-verify` (TLS cert verification for `wss://`). Chart:
   `push.allowPlaintext` (default false). Addresses AUDIT finding 1.
+
+### Changed
+
+- `--push-namespaces` parsing trims whitespace and drops empty entries.
+- Graceful reconnect: a dropped/refused connection logs at low level (no stack
+  trace) and backs off; an auth-rejection close backs off hard.
+- CI publishes a GitHub Release on `v*` tags (binaries + notes).
+- README rewritten; removed dead fork-scaffold files.
 
 ## [1.4.0] - 2026-07-09
 
