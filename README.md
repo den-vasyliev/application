@@ -5,12 +5,14 @@
 
 A Kubernetes CRD controller that provides an application-centric abstraction over raw Kubernetes resources. An `Application` resource groups related components (Deployments, StatefulSets, Services, Argo Rollouts, etc.) and aggregates their health into a single status.
 
-## What's new in v1.0.0
+Optionally runs in **push mode** — streaming its Application inventory and Kubernetes Warning events to a triage agent over an outbound WebSocket, so clusters with **no inbound API access** (firewalled / NAT'd / customer tenancies) can still be observed. See [Push mode](#push-mode-closed-clusters) and [ADR-0005](doc/adr/0005-outbound-push-mode.md).
 
-- **Go 1.24** — modernized from Go 1.13; all dependencies updated (k8s 0.31, controller-runtime 0.19)
-- **Argo Rollout support** — `Rollout.argoproj.io` status is now tracked via `status.phase` (`Healthy`→Ready, `Degraded`/`Paused`→InProgress). Previously degraded Rollouts were incorrectly reported as Ready.
-- **Envtest-based tests** — e2e suite replaced with envtest (no Kind cluster or real kubeconfig required)
-- **GitHub Actions CI** — replaces Travis CI; publishes multi-arch binaries on every tagged release
+## What's new in v1.4.0
+
+- **Push mode** — outbound WebSocket streaming of Applications + Kubernetes Warning events to a triage agent, for closed clusters. Opt-in via `--push-endpoint`; no effect when unset. ([ADR-0005](doc/adr/0005-outbound-push-mode.md))
+- **Helm chart** — `charts/kube-app-manager` is the recommended install. No `kube-rbac-proxy` sidecar; metrics off by default (`--metrics-addr=0`).
+
+Earlier (v1.0.0): Go 1.24+, Argo Rollout status via `status.phase`, envtest-based tests, GitHub Actions CI with multi-arch binaries.
 
 ## Supported component types
 
@@ -29,21 +31,61 @@ A Kubernetes CRD controller that provides an application-centric abstraction ove
 | _(core)_ | ReplicationController | all replicas ready |
 | _custom_ | anything | standard `Ready`/`InProgress` conditions |
 
-## Install
+## Install (Helm)
+
+The Helm chart is the recommended install. It bundles the CRD and ships **without**
+the legacy `kube-rbac-proxy` sidecar, with metrics disabled by default.
+
+```bash
+helm install app charts/kube-app-manager -n application-system --create-namespace
+```
+
+<details>
+<summary>Legacy kustomize / all-in-one manifest</summary>
+
+The kustomize config under `config/` and the assembled
+`deploy/kube-app-manager-aio.yaml` are retained for reference but are superseded by
+the Helm chart. They include the `kube-rbac-proxy` sidecar and a scaffold webhook
+service that most deployments do not need.
 
 ```bash
 kubectl apply -f https://github.com/den-vasyliev/application/releases/latest/download/kube-app-manager-aio.yaml
 ```
+</details>
+
+## Push mode (closed clusters)
+
+For a cluster the triage agent cannot reach (no inbound API), run the controller in
+**push mode**: it dials the triage agent over an outbound WebSocket and streams its
+Application inventory + deltas + Kubernetes Warning events. See
+[ADR-0005](doc/adr/0005-outbound-push-mode.md).
+
+```bash
+helm upgrade --install app charts/kube-app-manager -n application-system \
+  --set push.enabled=true \
+  --set push.endpoint=wss://<triage-host>/v1/cluster-agent/ws \
+  --set push.clusterName=ops \
+  --set push.namespaces=ops \
+  --set push.token=<bearer-token>          # or --set push.existingSecret=<name>
+```
+
+Push-mode flags (all off unless `--push-endpoint` is set):
+
+| Flag | Description |
+|------|-------------|
+| `--push-endpoint` | Triage WebSocket URL (`wss://host/v1/cluster-agent/ws`) |
+| `--cluster-name` | Cluster identifier stamped into pushed events (required) |
+| `--push-token` / `--push-token-file` | Bearer token (file preferred) |
+| `--push-namespaces` | Comma-separated namespaces; empty = all |
+| `--push-heartbeat` | Heartbeat interval in seconds (default 20) |
+| `--push-insecure-skip-verify` | Skip TLS verification (dev only) |
 
 ## Running locally
 
 ```bash
-# Download binary
-curl -L https://github.com/den-vasyliev/application/releases/latest/download/kube-app-manager-$(uname -s | tr '[:upper:]' '[:lower:]')-amd64 -o kube-app-manager
-chmod +x kube-app-manager
-
-# Run against current kubeconfig
-./kube-app-manager --metrics-addr :8080 --sync-period 120
+go build -o bin/kube-app-manager main.go
+# Against current kubeconfig (metrics off, reconcile only):
+./bin/kube-app-manager --metrics-addr=0 --sync-period 120
 ```
 
 ## Example Application

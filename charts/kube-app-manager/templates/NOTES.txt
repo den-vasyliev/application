@@ -1,0 +1,20 @@
+kube-app-manager {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+The Application controller (app.k8s.io/v1beta1) is now reconciling Applications.
+
+{{- if .Values.push.enabled }}
+
+Push mode is ENABLED — streaming to:
+  {{ .Values.push.endpoint }}  (cluster: {{ .Values.push.clusterName | default "<unset>" }})
+
+Check the connection:
+  kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "kube-app-manager.fullname" . }} | grep push
+{{- else }}
+
+Push mode is disabled. To stream Applications + Kubernetes Warning events to a
+triage agent (for closed clusters), set:
+  --set push.enabled=true \
+  --set push.endpoint=wss://<triage-host>/v1/cluster-agent/ws \
+  --set push.clusterName=<name> \
+  --set push.token=<bearer-token>   # or push.existingSecret=<secret with 'token' key>
+{{- end }}

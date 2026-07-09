@@ -20,6 +20,20 @@ import (
 	appv1beta1 "sigs.k8s.io/application/api/v1beta1"
 )
 
+// ParseNamespaces splits a comma-separated namespace list into a clean slice,
+// trimming surrounding whitespace and dropping empty entries. So "ops, dev",
+// "ops,dev" and "ops, ,dev," all yield ["ops", "dev"]. An empty or all-blank
+// input returns nil (meaning "all namespaces").
+func ParseNamespaces(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if ns := strings.TrimSpace(part); ns != "" {
+			out = append(out, ns)
+		}
+	}
+	return out
+}
+
 // Options configures the Pusher.
 type Options struct {
 	Endpoint      string        // wss://host/v1/cluster-agent/ws; empty disables push mode
@@ -277,6 +291,7 @@ func (p *Pusher) registerHandlers(ctx context.Context) ([]handlerReg, error) {
 		p.removeHandlers(regs)
 		return nil, err
 	}
+	p.log.Info("registered Application + Event informer handlers")
 	return append(regs, handlerReg{inf: evtInf, reg: evtReg}), nil
 }
 

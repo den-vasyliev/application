@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kube-app-manager.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-app-manager.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kube-app-manager.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kube-app-manager.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "kube-app-manager.serviceAccountName" . }}
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: kube-app-manager
+          image: {{ include "kube-app-manager.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            {{- if .Values.metrics.enabled }}
+            - --metrics-addr={{ .Values.metrics.bindAddress }}
+            {{- else }}
+            - --metrics-addr=0
+            {{- end }}
+            {{- if .Values.namespace }}
+            - --namespace={{ .Values.namespace }}
+            {{- end }}
+            - --sync-period={{ .Values.syncPeriod }}
+            - --stabilization-period={{ .Values.stabilizationPeriod }}
+            {{- if .Values.leaderElection.enabled }}
+            - --enable-leader-election
+            {{- end }}
+            {{- if .Values.push.enabled }}
+            - --push-endpoint={{ required "push.endpoint is required when push.enabled" .Values.push.endpoint }}
+            - --cluster-name={{ required "push.clusterName is required when push.enabled" .Values.push.clusterName }}
+            - --push-token-file=/etc/push/token
+            {{- if .Values.push.namespaces }}
+            - --push-namespaces={{ .Values.push.namespaces }}
+            {{- end }}
+            - --push-heartbeat={{ .Values.push.heartbeatSeconds }}
+            {{- if .Values.push.insecureSkipVerify }}
+            - --push-insecure-skip-verify
+            {{- end }}
+            {{- end }}
+          {{- if .Values.push.enabled }}
+          volumeMounts:
+            - name: push-token
+              mountPath: /etc/push
+              readOnly: true
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- if .Values.push.enabled }}
+      volumes:
+        - name: push-token
+          secret:
+            secretName: {{ include "kube-app-manager.pushSecretName" . }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

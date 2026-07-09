@@ -1,0 +1,68 @@
+# Default values for kube-app-manager.
+
+image:
+  repository: europe-docker.pkg.dev/gfk-eco-shared-blue/sre/application
+  tag: ""            # defaults to .Chart.appVersion when empty
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Namespace the controller's cache is restricted to. Empty = cluster-wide.
+namespace: ""
+
+# Resync period in seconds for the reconcile loop.
+syncPeriod: 120
+# Seconds to wait before transitioning an Application to Ready (anti-flap).
+stabilizationPeriod: 30
+
+# Leader election. Only needed when running more than one replica.
+leaderElection:
+  enabled: false
+
+# Metrics server. Disabled by default — no rbac-proxy sidecar is shipped; when
+# enabled, use controller-runtime's built-in secure metrics or scrape the plain
+# endpoint from a trusted network.
+metrics:
+  enabled: false
+  # Address the metrics endpoint binds to when enabled. "0" disables.
+  bindAddress: "127.0.0.1:8080"
+
+# Push mode: stream Applications + Kubernetes Warning events to a triage agent
+# over an outbound WebSocket (ADR-0005). Off by default.
+push:
+  enabled: false
+  # Triage agent WebSocket URL (wss://host/v1/cluster-agent/ws).
+  endpoint: ""
+  # Cluster identifier stamped into pushed events (triage source segment).
+  clusterName: ""
+  # Comma-separated namespaces to push. Empty pushes all namespaces.
+  namespaces: ""
+  # Heartbeat interval in seconds.
+  heartbeatSeconds: 20
+  # Skip TLS verification for the endpoint (dev only).
+  insecureSkipVerify: false
+  # Bearer token for the triage agent. Provide EITHER an existingSecret (with a
+  # 'token' key) OR an inline token (rendered into a Secret). existingSecret wins.
+  existingSecret: ""
+  token: ""
+
+serviceAccount:
+  # Create a dedicated ServiceAccount + RBAC. When false, uses `name`.
+  create: true
+  name: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

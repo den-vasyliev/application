@@ -74,7 +74,15 @@ Test assets (etcd, kube-apiserver, kubectl) must be present at the paths set by 
 
 ### Main Entry (`main.go`)
 
-Sets up the `controller-runtime` manager, registers the `ApplicationReconciler`, and starts the leader-elected control loop. Flags: `--metrics-addr`, `--enable-leader-election`, `--namespace`, `--sync-period`.
+Sets up the `controller-runtime` manager, registers the `ApplicationReconciler`, and starts the control loop. Flags: `--metrics-addr` (`0` disables), `--enable-leader-election`, `--namespace`, `--sync-period`, plus the push-mode flags (`--push-endpoint`, `--cluster-name`, `--push-token[-file]`, `--push-namespaces`, `--push-heartbeat`, `--push-insecure-skip-verify`).
+
+### Push mode (`push/`)
+
+Opt-in outbound-WebSocket streaming of Applications + Kubernetes Warning events to a triage agent, for clusters with no inbound API access (ADR-0005). `push.New()` returns nil unless `--push-endpoint` is set, so it is a no-op by default. `push.Pusher` is a `manager.Runnable` that reuses the manager cache/informers — it does **not** touch `controllers/`. The wire frames (`push/protocol.go`) mirror the triage receiver's `internal/remoteagent/protocol.go` (separate modules; keep them in sync).
+
+### Deploy
+
+`charts/kube-app-manager` (Helm) is the recommended install — bundles the CRD, toggles push mode + metrics, and omits the legacy `kube-rbac-proxy` sidecar. The `config/` kustomize + `deploy/kube-app-manager-aio.yaml` are retained but superseded.
 
 ### Testing
 

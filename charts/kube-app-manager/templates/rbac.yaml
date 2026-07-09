@@ -1,0 +1,78 @@
+{{- if .Values.serviceAccount.create -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kube-app-manager.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-app-manager.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kube-app-manager.fullname" . }}
+  labels:
+    {{- include "kube-app-manager.labels" . | nindent 4 }}
+rules:
+  # Read arbitrary component kinds to aggregate Application health, and read
+  # Warning events (for push mode). Broad read is required because component
+  # kinds are discovered dynamically from each Application's componentKinds.
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Own the Application resource + its status.
+  - apiGroups: ["app.k8s.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["app.k8s.io"]
+    resources: ["applications/status"]
+    verbs: ["get", "update", "patch"]
+{{- if .Values.leaderElection.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kube-app-manager.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-app-manager.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kube-app-manager.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-app-manager.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kube-app-manager.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kube-app-manager.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kube-app-manager.fullname" . }}
+  labels:
+    {{- include "kube-app-manager.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kube-app-manager.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kube-app-manager.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

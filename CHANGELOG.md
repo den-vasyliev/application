@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-09
+
+### Added
+
+- **Push mode** (`push/` package, [ADR-0005](doc/adr/0005-outbound-push-mode.md)):
+  when `--push-endpoint` is set, the controller dials a triage agent over an
+  outbound WebSocket and streams its Application inventory + status deltas +
+  Kubernetes Warning events. For clusters with no inbound API access. Opt-in and
+  fully additive — no effect when the flag is unset (reconcile behavior unchanged).
+  New flags: `--push-endpoint`, `--cluster-name`, `--push-token`,
+  `--push-token-file`, `--push-namespaces`, `--push-heartbeat`,
+  `--push-insecure-skip-verify`.
+- **Helm chart** (`charts/kube-app-manager`): the recommended install path. Bundles
+  the CRD, exposes push-mode and metrics toggles, and ships **without** the
+  `kube-rbac-proxy` sidecar.
+
+### Changed
+
+- `--push-namespaces` parsing trims whitespace and drops empty entries, so
+  `ops, dev` and `ops,dev` behave identically.
+- The Helm chart disables metrics by default (`--metrics-addr=0`) and omits the
+  scaffold `kube-rbac-proxy` sidecar and webhook service. The kustomize config and
+  all-in-one manifest under `config/` and `deploy/` are retained but superseded.
+
 ## [1.3.8] - 2026-06-30
 
 ### Fixed

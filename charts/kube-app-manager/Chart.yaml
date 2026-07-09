@@ -1,0 +1,21 @@
+apiVersion: v2
+name: kube-app-manager
+description: |
+  The Kubernetes Application controller (app.k8s.io/v1beta1). Groups related
+  workloads into an Application and aggregates their health. Optionally pushes
+  Application inventory + Kubernetes Warning events to a triage agent over an
+  outbound WebSocket for clusters with no inbound API access (push mode, ADR-0005).
+type: application
+version: 0.1.0
+appVersion: "1.4.0"
+keywords:
+  - application
+  - controller
+  - app.k8s.io
+  - triage
+  - push
+home: https://github.com/den-vasyliev/application
+sources:
+  - https://github.com/den-vasyliev/application
+maintainers:
+  - name: den-vasyliev

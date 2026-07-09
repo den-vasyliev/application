@@ -6,7 +6,6 @@ package main
 import (
 	"flag"
 	"os"
-	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -112,10 +111,8 @@ func main() {
 			setupLog.Error(nil, "a token is required: set --push-token or --push-token-file")
 			os.Exit(1)
 		}
-		var nsList []string
-		if pushNamespaces != "" {
-			nsList = strings.Split(pushNamespaces, ",")
-		} else if namespace != "" {
+		nsList := push.ParseNamespaces(pushNamespaces)
+		if len(nsList) == 0 && namespace != "" {
 			nsList = []string{namespace}
 		}
 		pusher := push.New(push.Options{

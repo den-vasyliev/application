@@ -174,6 +174,34 @@ func TestPusher_DeltaEnqueued(t *testing.T) {
 	t.Fatalf("app_delta not received; frames = %v", hub.kinds())
 }
 
+func TestParseNamespaces(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"ops", []string{"ops"}},
+		{"ops,dev", []string{"ops", "dev"}},
+		{"ops, dev", []string{"ops", "dev"}},    // spaces after comma
+		{" ops , dev ", []string{"ops", "dev"}}, // spaces everywhere
+		{"ops, ,dev,", []string{"ops", "dev"}},  // empty entries dropped
+		{"  ", nil},                             // all blank → nil
+		{",,", nil},                             // only separators → nil
+	}
+	for _, tt := range tests {
+		got := ParseNamespaces(tt.in)
+		if len(got) != len(tt.want) {
+			t.Errorf("ParseNamespaces(%q) = %v, want %v", tt.in, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("ParseNamespaces(%q)[%d] = %q, want %q", tt.in, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
 func contains(s []string, v string) bool {
 	for _, x := range s {
 		if x == v {
