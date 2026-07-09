@@ -115,7 +115,7 @@ func TestPusher_HelloSnapshotHeartbeat(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go func() { _ = p.runOnce(ctx) }()
+	go func() { _, _ = p.runOnce(ctx) }()
 
 	// Wait until we have at least hello, snapshot, snapshot_end, and one heartbeat.
 	deadline := time.Now().Add(2 * time.Second)
@@ -150,7 +150,7 @@ func TestPusher_DeltaEnqueued(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go func() { _ = p.runOnce(ctx) }()
+	go func() { _, _ = p.runOnce(ctx) }()
 
 	// Wait for the connection to establish (snapshot_end seen), then enqueue a delta.
 	deadline := time.Now().Add(2 * time.Second)

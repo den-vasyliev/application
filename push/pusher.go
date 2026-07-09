@@ -122,36 +122,49 @@ func (p *Pusher) Start(ctx context.Context) error {
 		return nil
 	}
 
+	const maxBackoff = 30 * time.Second
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
-		err := p.runOnce(ctx)
+		connected, err := p.runOnce(ctx)
 		if ctx.Err() != nil {
 			return nil
 		}
+		// A dropped or refused connection is a routine, self-healing condition (the
+		// triage agent may be restarting or briefly unreachable). Log it at a low
+		// level without a stack trace and keep retrying with capped backoff; only a
+		// genuinely unexpected error is worth a louder line.
 		if err != nil {
-			p.log.Error(err, "push connection ended; will reconnect", "backoff", backoff.String())
+			p.log.V(1).Info("push connection ended; will reconnect",
+				"reason", err.Error(), "backoff", backoff.String())
+		}
+		// A connection that actually established resets the backoff, so a long-lived
+		// stream that finally drops reconnects promptly rather than at max backoff.
+		if connected {
+			backoff = time.Second
 		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-time.After(backoff):
 		}
-		if backoff < 30*time.Second {
-			backoff *= 2
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
 		}
 	}
 }
 
 // runOnce dials, sends hello + snapshot, then streams deltas until the connection or
 // context ends. A fresh send channel + informer registration per connection ensures a
-// reconnect re-snapshots cleanly.
-func (p *Pusher) runOnce(ctx context.Context) error {
+// reconnect re-snapshots cleanly. It returns whether the connection was successfully
+// established (used to reset reconnect backoff) alongside any error.
+func (p *Pusher) runOnce(ctx context.Context) (connected bool, err error) {
 	token, err := p.resolveToken()
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	dialer := websocket.DefaultDialer
@@ -163,9 +176,10 @@ func (p *Pusher) runOnce(ctx context.Context) error {
 
 	conn, _, err := dialer.DialContext(ctx, p.opts.Endpoint, hdr)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer conn.Close()
+	connected = true
 
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -179,7 +193,7 @@ func (p *Pusher) runOnce(ctx context.Context) error {
 	if !p.skipHandlers {
 		regs, err := p.registerHandlers(connCtx)
 		if err != nil {
-			return err
+			return connected, err
 		}
 		defer p.removeHandlers(regs)
 	}
@@ -192,18 +206,18 @@ func (p *Pusher) runOnce(ctx context.Context) error {
 	if err := p.writeFrame(conn, newHello(p.opts.ClusterName, p.opts.AgentVersion, p.opts.Namespaces)); err != nil {
 		cancel()
 		wg.Wait()
-		return err
+		return connected, err
 	}
 	if err := p.sendSnapshot(conn); err != nil {
 		cancel()
 		wg.Wait()
-		return err
+		return connected, err
 	}
 
 	err = p.writeLoop(connCtx, conn, sendC)
 	cancel()
 	wg.Wait()
-	return err
+	return connected, err
 }
 
 // writeLoop drains the send channel and emits heartbeats until the context ends.
