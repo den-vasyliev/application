@@ -38,8 +38,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- end -}}
 
+{{/*
+Image ref. image.tag wins verbatim when set. Otherwise the default is the
+ko-published tag, which is "v" + Chart.AppVersion (ko tags with a leading v;
+see Makefile VER = v${app_major}.${app_minor}.${app_patch}). appVersion itself
+stays the plain semver per Helm convention.
+*/}}
 {{- define "app-controller.image" -}}
-{{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) -}}
+{{- $tag := .Values.image.tag | default (printf "v%s" .Chart.AppVersion) -}}
+{{- printf "%s:%s" .Values.image.repository $tag -}}
 {{- end -}}
 
 {{/* The Secret name holding the push token: existingSecret or a chart-managed one. */}}

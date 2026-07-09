@@ -36,6 +36,9 @@ spec:
             {{- end }}
             - --sync-period={{ .Values.syncPeriod }}
             - --stabilization-period={{ .Values.stabilizationPeriod }}
+            {{- if .Values.logLevel }}
+            - --zap-log-level={{ .Values.logLevel }}
+            {{- end }}
             {{- if .Values.leaderElection.enabled }}
             - --enable-leader-election
             {{- end }}

@@ -339,6 +339,11 @@ func (p *Pusher) onApp(op string, obj any) {
 	if !p.inScope(app.Namespace) {
 		return
 	}
+	// Trace (V(1), enabled via --zap-log-level=1|debug): one line per pushed
+	// Application delta so the exact stream to triage is observable on demand.
+	p.log.V(1).Info("push app delta",
+		"op", op, "namespace", app.Namespace, "name", app.Name,
+		"ready", app.Status.ComponentsReady)
 	p.enqueue(newAppDelta(p.opts.ClusterName, op, app))
 }
 
@@ -350,6 +355,10 @@ func (p *Pusher) onEvent(obj any) {
 	if !p.inScope(e.Namespace) {
 		return
 	}
+	// Trace (V(1)): one line per pushed Kubernetes Warning event.
+	p.log.V(1).Info("push k8s event",
+		"namespace", e.Namespace, "reason", e.Reason,
+		"kind", e.InvolvedObject.Kind, "object", e.InvolvedObject.Name)
 	p.enqueue(newK8sEvent(p.opts.ClusterName, e))
 }
 
