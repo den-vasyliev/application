@@ -1,8 +1,8 @@
-{{- define "kube-app-manager.name" -}}
+{{- define "app-controller.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "kube-app-manager.fullname" -}}
+{{- define "app-controller.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
@@ -15,8 +15,8 @@
 {{- end -}}
 {{- end -}}
 
-{{- define "kube-app-manager.labels" -}}
-app.kubernetes.io/name: {{ include "kube-app-manager.name" . }}
+{{- define "app-controller.labels" -}}
+app.kubernetes.io/name: {{ include "app-controller.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
@@ -25,28 +25,28 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 {{- end -}}
 
-{{- define "kube-app-manager.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "kube-app-manager.name" . }}
+{{- define "app-controller.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "app-controller.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "kube-app-manager.serviceAccountName" -}}
+{{- define "app-controller.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
-{{- default (include "kube-app-manager.fullname" .) .Values.serviceAccount.name -}}
+{{- default (include "app-controller.fullname" .) .Values.serviceAccount.name -}}
 {{- else -}}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "kube-app-manager.image" -}}
+{{- define "app-controller.image" -}}
 {{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) -}}
 {{- end -}}
 
 {{/* The Secret name holding the push token: existingSecret or a chart-managed one. */}}
-{{- define "kube-app-manager.pushSecretName" -}}
+{{- define "app-controller.pushSecretName" -}}
 {{- if .Values.push.existingSecret -}}
 {{- .Values.push.existingSecret -}}
 {{- else -}}
-{{- printf "%s-push-token" (include "kube-app-manager.fullname" .) -}}
+{{- printf "%s-push-token" (include "app-controller.fullname" .) -}}
 {{- end -}}
 {{- end -}}

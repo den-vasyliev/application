@@ -1,4 +1,4 @@
-# Default values for kube-app-manager.
+# Default values for app-controller.
 
 image:
   repository: europe-docker.pkg.dev/gfk-eco-shared-blue/sre/application

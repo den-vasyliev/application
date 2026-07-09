@@ -16,7 +16,7 @@ make install-tools
 ### Build
 
 ```bash
-make bin/kube-app-manager    # binary
+make bin/app-controller    # binary
 make ko-image                # OCI image (local layout, no push)
 make ko-push                 # build and push to $KO_DOCKER_REPO
 ```

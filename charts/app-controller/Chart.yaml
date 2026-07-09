@@ -1,5 +1,5 @@
 apiVersion: v2
-name: kube-app-manager
+name: app-controller
 description: |
   The Kubernetes Application controller (app.k8s.io/v1beta1). Groups related
   workloads into an Application and aggregates their health. Optionally pushes

@@ -1,9 +1,9 @@
 # Quick Start
 
-## Deploy to cluster
+## Deploy to cluster (Helm)
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/den-vasyliev/application/main/deploy/kube-app-manager-aio.yaml
+helm install app charts/app-controller -n application-system --create-namespace
 ```
 
 Verify:
@@ -14,9 +14,20 @@ kubectl get crd applications.app.k8s.io
 
 ## Example Application
 
-```bash
-kubectl apply -f docs/examples/wordpress/
-kubectl get application wordpress-01
+```yaml
+apiVersion: app.k8s.io/v1beta1
+kind: Application
+metadata:
+  name: my-app
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  componentKinds:
+    - group: apps
+      kind: Deployment
+    - group: ""
+      kind: Service
 ```
 
 # Dev Quick Start
@@ -38,20 +49,20 @@ make e2e-test    # e2e tests
 ## Build binary
 
 ```bash
-make bin/kube-app-manager
-./bin/kube-app-manager --help
+make bin/app-controller
+./bin/app-controller --help
 ```
 
 ## Build and push image
 
 ```bash
-export KO_DOCKER_REPO=ghcr.io/<your-org>/application
+export KO_DOCKER_REPO=ghcr.io/<your-org>/app-controller
 make ko-push
 ```
 
 ## Deploy to cluster
 
 ```bash
-make deploy CONTROLLER_IMG=<image>
+make deploy      # helm upgrade --install
 make undeploy
 ```

@@ -1,29 +1,29 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "kube-app-manager.fullname" . }}
+  name: {{ include "app-controller.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kube-app-manager.labels" . | nindent 4 }}
+    {{- include "app-controller.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "kube-app-manager.selectorLabels" . | nindent 6 }}
+      {{- include "app-controller.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "kube-app-manager.selectorLabels" . | nindent 8 }}
+        {{- include "app-controller.selectorLabels" . | nindent 8 }}
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "kube-app-manager.serviceAccountName" . }}
+      serviceAccountName: {{ include "app-controller.serviceAccountName" . }}
       terminationGracePeriodSeconds: 10
       containers:
-        - name: kube-app-manager
-          image: {{ include "kube-app-manager.image" . | quote }}
+        - name: app-controller
+          image: {{ include "app-controller.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             {{- if .Values.metrics.enabled }}
@@ -63,7 +63,7 @@ spec:
       volumes:
         - name: push-token
           secret:
-            secretName: {{ include "kube-app-manager.pushSecretName" . }}
+            secretName: {{ include "app-controller.pushSecretName" . }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

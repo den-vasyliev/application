@@ -1,4 +1,4 @@
-# kube-app-manager Helm chart
+# app-controller Helm chart
 
 Installs the Kubernetes Application controller (`app.k8s.io/v1beta1`) with optional
 **push mode** — streaming Application inventory + Kubernetes Warning events to a
@@ -11,7 +11,7 @@ kubebuilder-scaffold extras. Enable metrics explicitly if you scrape them.
 ## Install
 
 ```bash
-helm install app charts/kube-app-manager -n application-system --create-namespace
+helm install app charts/app-controller -n application-system --create-namespace
 ```
 
 The Application CRD ships in `crds/` and is installed automatically on first
@@ -20,7 +20,7 @@ install. (Helm does not upgrade CRDs — apply CRD changes manually.)
 ## Push mode
 
 ```bash
-helm upgrade --install app charts/kube-app-manager -n application-system \
+helm upgrade --install app charts/app-controller -n application-system \
   --set push.enabled=true \
   --set push.endpoint=wss://triage.example.com/v1/cluster-agent/ws \
   --set push.clusterName=ops \

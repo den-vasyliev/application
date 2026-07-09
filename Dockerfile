@@ -18,11 +18,11 @@ ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -a -ldflags '-extldflags "-static" -s -w' \
-    -o kube-app-manager main.go
+    -o app-controller main.go
 
 # Pinned by digest for reproducible builds; tag (gcr.io/distroless/static:nonroot) kept for readability.
 FROM gcr.io/distroless/static:nonroot@sha256:963fa6c544fe5ce420f1f54fb88b6fb01479f054c8056d0f74cc2c6000df5240
 WORKDIR /
-COPY --from=builder /workspace/kube-app-manager .
+COPY --from=builder /workspace/app-controller .
 USER nonroot:nonroot
-ENTRYPOINT ["/kube-app-manager"]
+ENTRYPOINT ["/app-controller"]

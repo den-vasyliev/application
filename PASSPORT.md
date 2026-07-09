@@ -1,10 +1,10 @@
-# Application Passport — kube-app-manager
+# Application Passport — app-controller
 
 ## 1. Identity
 
 | Field | Value |
 |---|---|
-| Component | kube-app-manager (Kubernetes Application controller) |
+| Component | app-controller (Kubernetes Application controller) |
 | Repository | https://github.com/den-vasyliev/application |
 | Go module | sigs.k8s.io/application |
 | Registry | ghcr.io/den-vasyliev/application |
@@ -31,19 +31,19 @@
 
 | Field | Value |
 |---|---|
-| Form | OCI container image / static binary `kube-app-manager` |
+| Form | OCI container image / static binary `app-controller` |
 | Language | Go 1.25 |
 | Build tools | `go build` (Makefile), Dockerfile multi-stage, ko (`.ko.yaml`) |
 | CGO | Disabled (`CGO_ENABLED=0`, statically linked) |
 | Base image (Dockerfile) | `gcr.io/distroless/static:nonroot` (digest-pinned) |
 | Base image (ko) | `cgr.dev/chainguard/static:latest-glibc` (digest-pinned) |
 | Runtime user | `nonroot` (Dockerfile + pod/container `securityContext`) |
-| Entrypoint | `/kube-app-manager` |
+| Entrypoint | `/app-controller` |
 
 ## 4. Privileges
 
-RBAC granted to the controller ServiceAccount (`config/rbac/role.yaml`, deployed in
-`deploy/kube-app-manager-aio.yaml` via ClusterRoleBinding).
+RBAC granted to the controller ServiceAccount
+(`charts/app-controller/templates/rbac.yaml`, a ClusterRole + ClusterRoleBinding).
 
 | API groups | Resources | Verbs |
 |---|---|---|

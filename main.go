@@ -52,7 +52,7 @@ func main() {
 	flag.Int64Var(&syncPeriod, "sync-period", 120, "Sync every sync-period seconds.")
 	flag.Int64Var(&stabilizationPeriod, "stabilization-period", 30, "Seconds to wait before transitioning an Application to Ready, to avoid flapping.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
-		"Enable leader election for controller kube-app-manager. Enabling this will ensure there is only one active controller kube-app-manager.")
+		"Enable leader election for controller app-controller. Enabling this will ensure there is only one active controller app-controller.")
 
 	// Push mode (ADR-0005): stream Applications + Warning events to a triage agent
 	// over an outbound WebSocket. Off unless --push-endpoint is set.
@@ -82,11 +82,11 @@ func main() {
 		Scheme:           scheme,
 		Metrics:          metricsserver.Options{BindAddress: metricsAddr},
 		LeaderElection:   enableLeaderElection,
-		LeaderElectionID: "kube-app-manager",
+		LeaderElectionID: "app-controller",
 		Cache:            cacheOpts,
 	})
 	if err != nil {
-		setupLog.Error(err, "unable to start kube-app-manager")
+		setupLog.Error(err, "unable to start app-controller")
 		os.Exit(1)
 	}
 
@@ -132,9 +132,9 @@ func main() {
 		setupLog.Info("push mode enabled", "endpoint", pushEndpoint, "cluster", clusterName, "namespaces", nsList)
 	}
 
-	setupLog.Info("starting kube-app-manager")
+	setupLog.Info("starting app-controller")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem running kube-app-manager")
+		setupLog.Error(err, "problem running app-controller")
 		os.Exit(1)
 	}
 }

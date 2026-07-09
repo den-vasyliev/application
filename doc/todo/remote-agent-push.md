@@ -4,7 +4,7 @@
 **ADR:** [ADR-0005](../adr/0005-outbound-push-mode.md)
 **Companion (hub side):** triage-agent → `docs/todo/remote-agent-ws-source.md` (ADR-029)
 
-Add an opt-in push mode to `kube-app-manager`: dial an outbound WebSocket to the
+Add an opt-in push mode to `app-controller`: dial an outbound WebSocket to the
 triage agent and stream Application snapshot + deltas + k8s Warning events. Off by
 default; existing behavior unchanged when `--push-endpoint` is empty.
 

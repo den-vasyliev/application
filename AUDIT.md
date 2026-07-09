@@ -1,4 +1,4 @@
-# Security Audit — kube-app-manager
+# Security Audit — app-controller
 
 _Audited 2026-06-30 against v1.3.6. Closure summary; see `PASSPORT.md` for component facts._
 
@@ -18,7 +18,7 @@ _Audited 2026-06-30 against v1.3.6. Closure summary; see `PASSPORT.md` for compo
 ## Scope
 
 - Go dependency supply chain (`go.mod`) — SBOM (syft) + vulnerability scan (trivy).
-- RBAC / ServiceAccount privileges (`config/rbac/`, `deploy/kube-app-manager-aio.yaml`).
+- RBAC / ServiceAccount privileges (`charts/app-controller/templates/rbac.yaml`).
 - Container artifact (Dockerfile, `.ko.yaml`) and deployed pod spec.
 - Network surface (metrics, sidecar, Service).
 - Dynamic component-watch scoping.

@@ -1,8 +1,7 @@
 export app_major=1
-export app_minor=3
-export app_patch=8
+export app_minor=4
+export app_patch=0
 
 
 export REGISTRY=quay.io/kubernetes-sigs
 export RELEASE_REMOTE=upstream
-export AIO_YAML=deploy/kube-app-manager-aio.yaml

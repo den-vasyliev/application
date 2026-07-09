@@ -27,8 +27,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--push-namespaces` parsing trims whitespace and drops empty entries, so
   `ops, dev` and `ops,dev` behave identically.
 - The Helm chart disables metrics by default (`--metrics-addr=0`) and omits the
-  scaffold `kube-rbac-proxy` sidecar and webhook service. The kustomize config and
-  all-in-one manifest under `config/` and `deploy/` are retained but superseded.
+  scaffold `kube-rbac-proxy` sidecar and webhook service.
+
+### Removed
+
+- Legacy kustomize deploy machinery now that the Helm chart is the install path:
+  `config/default`, `config/kube-app-manager`, `config/rbac`, `config/prometheus`,
+  `config/crd` kustomizations + webhook/cainjection patches, `deploy/` (the
+  all-in-one manifest), and the `docs/examples/wordpress` demo. Only the CRD source
+  (`config/crd/bases/`) remains. Dropped the now-unused kustomize tool and the
+  `generate-resources`/`set-image`/`deploy-wordpress` Make targets.
 
 ## [1.3.8] - 2026-06-30
 

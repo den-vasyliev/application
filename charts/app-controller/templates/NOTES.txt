@@ -1,4 +1,4 @@
-kube-app-manager {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+app-controller {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
 
 The Application controller (app.k8s.io/v1beta1) is now reconciling Applications.
 
@@ -8,7 +8,7 @@ Push mode is ENABLED — streaming to:
   {{ .Values.push.endpoint }}  (cluster: {{ .Values.push.clusterName | default "<unset>" }})
 
 Check the connection:
-  kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "kube-app-manager.fullname" . }} | grep push
+  kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "app-controller.fullname" . }} | grep push
 {{- else }}
 
 Push mode is disabled. To stream Applications + Kubernetes Warning events to a
