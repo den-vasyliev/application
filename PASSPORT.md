@@ -5,12 +5,15 @@
 | Field | Value |
 |---|---|
 | Component | app-controller (Kubernetes Application controller) |
+| Description | Groups related Kubernetes resources into an `Application` and aggregates their health; optionally pushes Application inventory + Warning events to a triage agent over an outbound WebSocket |
 | Repository | https://github.com/den-vasyliev/application |
 | Go module | sigs.k8s.io/application |
-| Registry | ghcr.io/den-vasyliev/application |
-| Version (git describe) | v1.3.8 |
+| Registry | ghcr.io/den-vasyliev/application (also mirrored to internal Artifact Registry) |
+| Version | v1.4.0 |
 | Owner | den-vasyliev (den.vasyliev@gmail.com) |
 | License | Apache-2.0 |
+| Audit status | No CVEs (0 across all severities); HIGH/CRITICAL findings 0 open |
+| Code review | Passed 2026-07-09 (push/ package reviewed; low/medium findings in AUDIT.md) |
 
 ## 2. Classification
 
@@ -19,12 +22,12 @@
 | Class | Kubernetes controller / operator |
 | Type | CRD controller (controller-runtime, operator pattern) |
 | Custom resource | `Application` (`app.k8s.io/v1beta1`), Namespaced scope |
-| Capabilities | Groups related Kubernetes resources via label selector + componentKinds; aggregates component health into a single Application status; optionally sets ownerReferences on matched components |
+| Capabilities | Groups Kubernetes resources via label selector + componentKinds; aggregates component health into Application status; optionally streams Applications + Kubernetes Warning events to a triage agent (push mode) |
 | Model role | None (no AI/LLM component) |
 | Runtime | In-cluster controller, single replica, optional leader election |
-| Public accessibility | Not exposed externally; in-cluster only |
-| Data access | Reads cluster resources to aggregate component health; writes limited to Application status and optional ownerReferences |
-| PII | None handled by the application |
+| Public accessibility | Not exposed externally; outbound-only when push mode is enabled |
+| Data access | Reads cluster resources to aggregate component health; writes limited to Application status. Push mode reads Applications + Warning events and sends them off-cluster |
+| PII | None handled by the controller |
 | Sensitivity | In-cluster control-plane component |
 
 ## 3. Artifact
@@ -35,65 +38,54 @@
 | Language | Go 1.25 |
 | Build tools | `go build` (Makefile), Dockerfile multi-stage, ko (`.ko.yaml`) |
 | CGO | Disabled (`CGO_ENABLED=0`, statically linked) |
-| Base image (Dockerfile) | `gcr.io/distroless/static:nonroot` (digest-pinned) |
-| Base image (ko) | `cgr.dev/chainguard/static:latest-glibc` (digest-pinned) |
-| Runtime user | `nonroot` (Dockerfile + pod/container `securityContext`) |
+| Base image (Dockerfile) | `gcr.io/distroless/static:nonroot` @ `sha256:963fa6c5…df5240` (digest-pinned) |
+| Base image (ko) | `cgr.dev/chainguard/static:latest-glibc` @ `sha256:77d8b892…cb75b` (digest-pinned) |
+| Runtime user | `nonroot:nonroot` |
 | Entrypoint | `/app-controller` |
+| Deploy | Helm chart `charts/app-controller` (bundles CRD; no kube-rbac-proxy sidecar) |
 
-## 4. Privileges
+## 4. Egress (push mode)
 
-RBAC granted to the controller ServiceAccount
-(`charts/app-controller/templates/rbac.yaml`, a ClusterRole + ClusterRoleBinding).
-
-| API groups | Resources | Verbs |
-|---|---|---|
-| `*` | `*` | get, list, watch, update, patch |
-| `app.k8s.io` | `applications` | create, delete, get, list, patch, update, watch |
-| `app.k8s.io` | `applications/status` | get, patch, update |
-
-Leader-election role (namespaced) and the kube-rbac-proxy sidecar role
-(`authentication.k8s.io/tokenreviews` create, `authorization.k8s.io/subjectaccessreviews`
-create) are bound separately.
-
-Dynamic component watches are registered at runtime per `spec.componentKinds` GVK, but
-scoped in code to a `workloadKinds` allow-list (Deployment, StatefulSet, ReplicaSet,
-DaemonSet, Pod, Service, PVC, PodDisruptionBudget, ReplicationController, Job, CronJob,
-Argo Rollout). Secret / ConfigMap / ServiceAccount kinds are explicitly excluded from
-real-time watches.
-
-## 5. Network Surface
-
-| Port | Listener | Component | Deployed bind | Auth state |
+| Destination | Purpose | Transport | Auth | Note |
 |---|---|---|---|---|
-| 8080 | HTTP metrics | controller manager (`--metrics-addr`) | `127.0.0.1:8080` (loopback default) | Fronted by the rbac-proxy |
-| 8443 | HTTPS | kube-rbac-proxy sidecar (`gcr.io/kubebuilder/kube-rbac-proxy:v0.4.1`) | `0.0.0.0:8443` | RBAC via TokenReview + SubjectAccessReview |
-| 443 → 8443 | Service | metrics Service | cluster-internal | (fronts the proxy) |
+| `--push-endpoint` (triage agent WS) | Stream Application inventory + deltas + Kubernetes Warning events | WebSocket (`wss://` intended) | `Authorization: Bearer <token>` | Outbound only; disabled unless `--push-endpoint` is set |
 
-The controller does not serve health/readiness probe endpoints in the deployed manifest.
-No webhook server is configured.
+## 5. Privileges
 
-## 6. Dependency Vulnerabilities
+RBAC granted to the controller ServiceAccount (`charts/app-controller/templates/rbac.yaml`).
 
-SBOM: CycloneDX 1.6 (syft), Go ecosystem, 63 components. Scan: trivy (`go.mod`).
+| Scope | API groups | Resources | Verbs |
+|---|---|---|---|
+| ClusterRole (always) | `*` | `*` | get, list, watch |
+| ClusterRole (always) | `app.k8s.io` | `applications` | get, list, watch, create, update, patch, delete |
+| ClusterRole (always) | `app.k8s.io` | `applications/status` | get, update, patch |
+| Role (leaderElection only) | `coordination.k8s.io` | `leases` | get, list, watch, create, update, patch, delete |
+| Role (leaderElection only) | `""` | `events` | create, patch |
+
+| Field | Value |
+|---|---|
+| ServiceAccount | Created by the chart (`serviceAccount.create: true`); dedicated per release |
+| Dynamic watches | Registered at runtime per `spec.componentKinds` GVK; workload kinds only (Deployment, StatefulSet, ReplicaSet, DaemonSet, Pod, Service, PVC, PodDisruptionBudget, ReplicationController, Job, CronJob, Argo Rollout) |
+| Excluded from real-time watches | Secret / ConfigMap / ServiceAccount kinds |
+| Token mount (push mode) | k8s Secret `token` key mounted read-only at `/etc/push` |
+
+## 6. Network Surface
+
+| Port | Listener | Deployed bind | Auth state |
+|---|---|---|---|
+| 8080 | HTTP metrics (`--metrics-addr`) | Disabled by default (`--metrics-addr=0`); when enabled binds `127.0.0.1:8080` | No sidecar; plain endpoint on loopback |
+
+| Field | Value |
+|---|---|
+| Inbound listeners | None in push mode (outbound WebSocket only) |
+| Webhook server | None configured |
+| Health/readiness endpoints | None served in the deployed manifest |
+| kube-rbac-proxy sidecar | Removed (was present in the legacy kustomize deploy) |
+
+## 7. Dependency Vulnerabilities
+
+SBOM: CycloneDX 1.6 (syft), Go ecosystem, 65 components. Scan: trivy (`go.mod` + `go.sum`).
 
 | Ecosystem | Critical | High | Medium | Low | Unknown |
 |---|---|---|---|---|---|
 | Go (go.mod) | 0 | 0 | 0 | 0 | 0 |
-
-No known vulnerabilities.
-
-## 7. Security Audit Status
-
-| Field | Value |
-|---|---|
-| Last audit | 2026-06-30 (against v1.3.6) |
-| Method | SBOM (syft) + dependency scan (trivy); RBAC, container, and network-surface review |
-| Result | All findings resolved or accepted; **0 open** |
-| Open critical/high | 0 |
-| Dependency scan | 0 vulnerabilities (see §6) |
-| Report | `AUDIT.md` (closure summary) |
-
-Remediation summary (no sensitive detail): dependencies updated and the Go toolchain
-raised to 1.25 (0 vulnerabilities); a hardened pod/container `securityContext` added to
-the deployed manifest; base images pinned by digest; metrics bound to loopback by
-default; deployed image and `VERSION` aligned with the released source.
