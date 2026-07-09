@@ -243,6 +243,13 @@ func (p *Pusher) writeLoop(ctx context.Context, conn *websocket.Conn, sendC chan
 				return err
 			}
 		case <-ticker.C:
+			// WebSocket ping control frame first: LBs and proxies reset their idle
+			// timer on ping/pong, but many ignore data (text) frames — a text-only
+			// heartbeat gets the connection reaped mid-stream (1006) at the LB's
+			// idle boundary. The text heartbeat still follows for the app-level pong.
+			if err := p.writePing(conn); err != nil {
+				return err
+			}
 			if err := p.writeFrame(conn, newHeartbeat(p.opts.ClusterName)); err != nil {
 				return err
 			}
@@ -427,6 +434,13 @@ func (p *Pusher) writeFrame(conn *websocket.Conn, f *Frame) error {
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// writePing sends a WebSocket ping control frame. Intermediaries (LBs, proxies)
+// treat ping/pong as connection liveness and reset their idle timer on it, so
+// this is what actually keeps a long-lived stream from being reaped.
+func (p *Pusher) writePing(conn *websocket.Conn) error {
+	return conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
 }
 
 // resolveToken reads the token from TokenFile (preferred) or the literal Token.
