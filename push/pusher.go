@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -89,6 +90,9 @@ type Pusher struct {
 	listAppsFn func(context.Context) ([]*appv1beta1.Application, error)
 	// skipHandlers disables informer registration (tests that drive frames directly).
 	skipHandlers bool
+	// rejected is set when the hub closes with a policy-violation (auth) code, so the
+	// reconnect loop backs off to the maximum instead of retrying with a bad token.
+	rejected atomic.Bool
 }
 
 // New creates a Pusher. Returns nil if push mode is disabled (empty endpoint).
@@ -144,6 +148,12 @@ func (p *Pusher) Start(ctx context.Context) error {
 		// stream that finally drops reconnects promptly rather than at max backoff.
 		if connected {
 			backoff = time.Second
+		}
+		// An auth rejection (policy-violation close) is a config problem that will not
+		// fix itself by retrying quickly — go straight to max backoff so a mis-tokened
+		// agent probes gently rather than hammering the receiver.
+		if p.rejected.Swap(false) {
+			backoff = maxBackoff
 		}
 		select {
 		case <-ctx.Done():
@@ -241,11 +251,17 @@ func (p *Pusher) writeLoop(ctx context.Context, conn *websocket.Conn, sendC chan
 }
 
 // readLoop consumes hub→agent frames (pong). Any read error ends the connection.
+// If the hub closed with a policy-violation code (auth rejection), it records that
+// so the reconnect loop backs off hard instead of hammering with a bad token.
 func (p *Pusher) readLoop(_ context.Context, cancel context.CancelFunc, conn *websocket.Conn) {
 	defer cancel()
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
+			if ce, ok := err.(*websocket.CloseError); ok && ce.Code == websocket.ClosePolicyViolation {
+				p.rejected.Store(true)
+				p.log.Error(nil, "push handshake rejected by triage (check token / cluster-name)", "reason", ce.Text)
+			}
 			return
 		}
 		if _, err := decode(data); err != nil {
