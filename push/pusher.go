@@ -3,7 +3,9 @@ package push
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -19,6 +21,29 @@ import (
 
 	appv1beta1 "sigs.k8s.io/application/api/v1beta1"
 )
+
+// ValidateEndpoint checks the push endpoint scheme. wss:// (encrypted) is always
+// accepted. ws:// (plaintext) sends the bearer token in the clear and is accepted
+// only when allowPlaintext is true, so plaintext is a deliberate opt-in — never a
+// silent default. This is independent of TLS certificate verification, which is a
+// separate concern (see Options.InsecureTLS).
+func ValidateEndpoint(endpoint string, allowPlaintext bool) error {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("invalid --push-endpoint %q: %w", endpoint, err)
+	}
+	switch u.Scheme {
+	case "wss":
+		return nil
+	case "ws":
+		if allowPlaintext {
+			return nil
+		}
+		return fmt.Errorf("--push-endpoint uses plaintext ws:// which sends the bearer token in the clear; use wss:// or set --push-allow-plaintext to allow it")
+	default:
+		return fmt.Errorf("--push-endpoint must be a ws:// or wss:// URL, got scheme %q", u.Scheme)
+	}
+}
 
 // ParseNamespaces splits a comma-separated namespace list into a clean slice,
 // trimming surrounding whitespace and dropping empty entries. So "ops, dev",

@@ -174,6 +174,29 @@ func TestPusher_DeltaEnqueued(t *testing.T) {
 	t.Fatalf("app_delta not received; frames = %v", hub.kinds())
 }
 
+func TestValidateEndpoint(t *testing.T) {
+	tests := []struct {
+		endpoint       string
+		allowPlaintext bool
+		wantErr        bool
+	}{
+		{"wss://triage/v1/cluster-agent/ws", false, false}, // secure → ok
+		{"wss://triage/v1/cluster-agent/ws", true, false},  // secure, plaintext allowed → ok
+		{"ws://triage/v1/cluster-agent/ws", false, true},   // plaintext, not opted in → reject
+		{"ws://triage/v1/cluster-agent/ws", true, false},   // plaintext, explicitly allowed → ok
+		{"http://triage/foo", false, true},                 // wrong scheme → reject
+		{"https://triage/foo", false, true},                // wrong scheme → reject
+		{"triage:8080", false, true},                       // no ws scheme → reject
+		{"://bad", false, true},                            // unparseable → reject
+	}
+	for _, tt := range tests {
+		err := ValidateEndpoint(tt.endpoint, tt.allowPlaintext)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("ValidateEndpoint(%q, allowPlaintext=%v) err=%v, wantErr=%v", tt.endpoint, tt.allowPlaintext, err, tt.wantErr)
+		}
+	}
+}
+
 func TestParseNamespaces(t *testing.T) {
 	tests := []struct {
 		in   string

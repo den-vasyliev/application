@@ -52,7 +52,8 @@ Or reference an existing Secret (key `token`):
 | `push.clusterName` | `""` | Cluster name stamped into events (required when enabled) |
 | `push.namespaces` | `""` | Comma-separated namespaces; empty = all |
 | `push.heartbeatSeconds` | `20` | Heartbeat interval |
-| `push.insecureSkipVerify` | `false` | Skip TLS verify (dev only) |
+| `push.insecureSkipVerify` | `false` | Skip TLS cert verify for `wss://` (dev only) |
+| `push.allowPlaintext` | `false` | Allow plaintext `ws://` endpoint (token unencrypted) |
 | `push.existingSecret` | `""` | Secret (key `token`) holding the bearer token |
 | `push.token` | `""` | Inline token (rendered into a Secret) |
 | `serviceAccount.create` | `true` | Create SA + RBAC |

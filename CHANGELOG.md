@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- Push mode now rejects a non-`wss://` `--push-endpoint` at startup so the bearer
+  token is never sent over plaintext by accident. A plaintext `ws://` endpoint is
+  allowed only with the explicit `--push-allow-plaintext` flag, which is separate
+  from `--push-insecure-skip-verify` (TLS cert verification for `wss://`). Chart:
+  `push.allowPlaintext` (default false). Addresses AUDIT finding 1.
+
 ## [1.4.0] - 2026-07-09
 
 ### Added

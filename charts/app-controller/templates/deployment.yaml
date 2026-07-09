@@ -50,6 +50,9 @@ spec:
             {{- if .Values.push.insecureSkipVerify }}
             - --push-insecure-skip-verify
             {{- end }}
+            {{- if .Values.push.allowPlaintext }}
+            - --push-allow-plaintext
+            {{- end }}
             {{- end }}
           {{- if .Values.push.enabled }}
           volumeMounts:

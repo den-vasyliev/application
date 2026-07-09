@@ -69,7 +69,12 @@ Push-mode flags (all off unless `--push-endpoint` is set):
 | `--push-token` / `--push-token-file` | Bearer token (file preferred) |
 | `--push-namespaces` | Comma-separated namespaces; empty = all |
 | `--push-heartbeat` | Heartbeat interval in seconds (default 20) |
-| `--push-insecure-skip-verify` | Skip TLS verification (dev only) |
+| `--push-insecure-skip-verify` | Skip TLS **cert** verification for a `wss://` endpoint (dev only) |
+| `--push-allow-plaintext` | Allow a plaintext `ws://` endpoint (token unencrypted; dev/trusted network) |
+
+The endpoint must be `wss://`; a `ws://` endpoint is rejected at startup unless
+`--push-allow-plaintext` is set, so the bearer token is never sent in the clear by
+accident.
 
 ## Running locally
 

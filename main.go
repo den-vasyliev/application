@@ -46,7 +46,7 @@ func main() {
 	var enableLeaderElection bool
 	var pushEndpoint, clusterName, pushToken, pushTokenFile, pushNamespaces string
 	var pushHeartbeat int64
-	var pushInsecure bool
+	var pushInsecure, pushAllowPlaintext bool
 	flag.StringVar(&namespace, "namespace", "", "Namespace within which CRD controller is running.")
 	flag.StringVar(&metricsAddr, "metrics-addr", "127.0.0.1:8080", "The address the metric endpoint binds to. Defaults to loopback; expose via an authenticating proxy (e.g. kube-rbac-proxy) rather than binding to all interfaces.")
 	flag.Int64Var(&syncPeriod, "sync-period", 120, "Sync every sync-period seconds.")
@@ -62,7 +62,8 @@ func main() {
 	flag.StringVar(&pushTokenFile, "push-token-file", "", "Path to a file containing the Bearer token.")
 	flag.StringVar(&pushNamespaces, "push-namespaces", "", "Comma-separated namespaces to push; empty pushes all.")
 	flag.Int64Var(&pushHeartbeat, "push-heartbeat", 20, "Heartbeat interval in seconds.")
-	flag.BoolVar(&pushInsecure, "push-insecure-skip-verify", false, "Skip TLS verification for --push-endpoint (dev only).")
+	flag.BoolVar(&pushInsecure, "push-insecure-skip-verify", false, "Skip TLS certificate verification for a wss:// endpoint (dev only).")
+	flag.BoolVar(&pushAllowPlaintext, "push-allow-plaintext", false, "Allow a plaintext ws:// endpoint (sends the bearer token unencrypted; dev/trusted-network only).")
 
 	// Bind the zap logging flags (--zap-log-level, --zap-devel, --zap-encoder, ...) so log
 	// verbosity is controllable at runtime.
@@ -103,6 +104,10 @@ func main() {
 
 	// Push mode: stream Applications + Warning events to a triage agent (ADR-0005).
 	if pushEndpoint != "" {
+		if err := push.ValidateEndpoint(pushEndpoint, pushAllowPlaintext); err != nil {
+			setupLog.Error(err, "invalid --push-endpoint")
+			os.Exit(1)
+		}
 		if clusterName == "" {
 			setupLog.Error(nil, "--cluster-name is required when --push-endpoint is set")
 			os.Exit(1)

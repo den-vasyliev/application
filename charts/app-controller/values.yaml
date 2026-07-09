@@ -42,8 +42,11 @@ push:
   namespaces: ""
   # Heartbeat interval in seconds.
   heartbeatSeconds: 20
-  # Skip TLS verification for the endpoint (dev only).
+  # Skip TLS certificate verification for a wss:// endpoint (dev only).
   insecureSkipVerify: false
+  # Allow a plaintext ws:// endpoint (sends the bearer token unencrypted).
+  # Leave false in production; the endpoint should be wss://.
+  allowPlaintext: false
   # Bearer token for the triage agent. Provide EITHER an existingSecret (with a
   # 'token' key) OR an inline token (rendered into a Secret). existingSecret wins.
   existingSecret: ""
