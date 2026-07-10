@@ -3,7 +3,7 @@
 Installs the Kubernetes Application controller (`app.k8s.io/v1beta1`) with optional
 **push mode** — streaming Application inventory + Kubernetes Warning events to a
 triage agent over an outbound WebSocket for clusters with no inbound API access
-(see [ADR-0005](../../doc/adr/0005-outbound-push-mode.md)).
+(see [ADR-0005](../../docs/adr/0005-outbound-push-mode.md)).
 
 No `kube-rbac-proxy` sidecar and metrics disabled by default — the two legacy
 kubebuilder-scaffold extras. Enable metrics explicitly if you scrape them.

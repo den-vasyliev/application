@@ -129,5 +129,5 @@ today. Leader election (if enabled) gates the pusher so only one replica streams
 
 ## Implementation
 
-Tracked in `doc/todo/remote-agent-push.md`. Receiving end: triage-agent
+Tracked in `docs/todo/remote-agent-push.md`. Receiving end: triage-agent
 `docs/todo/remote-agent-ws-source.md` (ADR-029).

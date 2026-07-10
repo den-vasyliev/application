@@ -1,7 +1,7 @@
 // Package push implements outbound push mode: the controller dials a triage agent
 // over an authenticated WebSocket and streams its Application inventory + deltas +
 // Kubernetes Warning events, for closed clusters that triage cannot reach via the
-// API (see doc/adr/0005-outbound-push-mode.md; triage side ADR-029).
+// API (see docs/adr/0005-outbound-push-mode.md; triage side ADR-029).
 //
 // The frame types here MUST stay wire-compatible with the triage receiver's
 // internal/remoteagent/protocol.go — they are separate Go modules, so the types are
