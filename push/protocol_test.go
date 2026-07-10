@@ -16,7 +16,7 @@ func TestFrameRoundTrip(t *testing.T) {
 	app.Status.Conditions = []appv1beta1.Condition{{Type: "Ready", Status: corev1.ConditionTrue}}
 
 	frames := []*Frame{
-		newHello("owl", "1.3.8", []string{"ops"}),
+		newHello("owl", "newron", "1.3.8", []byte("test-key"), 1720000000, []string{"ops"}),
 		newSnapshot("owl", []*appv1beta1.Application{app}),
 		newSnapshotEnd("owl"),
 		newAppDelta("owl", OpUpdate, app),

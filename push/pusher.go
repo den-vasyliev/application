@@ -62,15 +62,21 @@ func ParseNamespaces(s string) []string {
 
 // Options configures the Pusher.
 type Options struct {
-	Endpoint      string        // wss://host/v1/cluster-agent/ws; empty disables push mode
-	ClusterName   string        // stamped into every frame (triage source segment)
-	Token         string        // Bearer token (literal); TokenFile takes precedence
-	TokenFile     string        // path to a file containing the Bearer token
+	Endpoint    string // wss://host/events/ws; empty disables push mode
+	ClusterName string // stamped into every frame (triage source segment)
+	Tenant      string // tenant this cluster belongs to; selects the triage service graph
+	// Token/TokenFile provide the HMAC signing key for the handshake (the value is the
+	// per-tenant key, not a bearer token). TokenFile takes precedence. The same value
+	// is also sent as a coarse pre-upgrade Bearer credential.
+	Token         string
+	TokenFile     string
 	Namespaces    []string      // namespaces to watch; empty = all
 	AgentVersion  string        // reported in hello
 	Heartbeat     time.Duration // heartbeat interval (default 20s)
 	InsecureTLS   bool          // skip TLS verify (dev only)
 	SnapshotChunk int           // apps per snapshot frame (default 50)
+	// now returns the current time; injectable in tests. Defaults to time.Now.
+	now func() time.Time
 }
 
 // Pusher streams Application inventory + Kubernetes Warning events to a triage agent
@@ -105,6 +111,9 @@ func New(opts Options, mgr manager.Manager, log logr.Logger) *Pusher {
 	}
 	if opts.SnapshotChunk <= 0 {
 		opts.SnapshotChunk = 50
+	}
+	if opts.now == nil {
+		opts.now = time.Now
 	}
 	return &Pusher{
 		opts:   opts,
@@ -212,8 +221,15 @@ func (p *Pusher) runOnce(ctx context.Context) (connected bool, err error) {
 	wg.Add(1)
 	go func() { defer wg.Done(); p.readLoop(connCtx, cancel, conn) }()
 
-	// Hello + snapshot before streaming deltas.
-	if err := p.writeFrame(conn, newHello(p.opts.ClusterName, p.opts.AgentVersion, p.opts.Namespaces)); err != nil {
+	// Hello + snapshot before streaming deltas. The hello is HMAC-signed with the
+	// resolved key over (tenant,cluster,now) so the receiver can verify + route.
+	nowFn := p.opts.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	hello := newHello(p.opts.ClusterName, p.opts.Tenant, p.opts.AgentVersion,
+		[]byte(token), nowFn().Unix(), p.opts.Namespaces)
+	if err := p.writeFrame(conn, hello); err != nil {
 		cancel()
 		wg.Wait()
 		return connected, err

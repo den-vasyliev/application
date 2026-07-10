@@ -50,10 +50,17 @@ type Frame struct {
 	K8sEvent *K8sEventPayload `json:"k8sEvent,omitempty"`
 }
 
-// HelloPayload is the first frame sent after the WebSocket upgrade.
+// HelloPayload is the first frame sent after the WebSocket upgrade. It is
+// HMAC-signed: the agent signs (Tenant,ClusterName,Timestamp) with its tenant's key
+// so the receiver can verify it holds that key. Tenant selects the service graph on
+// the triage side; ClusterName is metadata for source-path stamping. Field names/tags
+// MUST match the receiver's HelloPayload exactly.
 type HelloPayload struct {
 	AgentVersion string   `json:"agentVersion,omitempty"`
 	ClusterName  string   `json:"clusterName"`
+	Tenant       string   `json:"tenant"`
+	Timestamp    int64    `json:"ts"`  // unix seconds; bounds replay
+	Signature    string   `json:"sig"` // base64(HMAC-SHA256(key[tenant], canonical))
 	Namespaces   []string `json:"namespaces,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
 }
@@ -74,11 +81,15 @@ type K8sEventPayload struct {
 	Event *corev1.Event `json:"event"`
 }
 
-// newHello builds the hello frame.
-func newHello(cluster, agentVersion string, namespaces []string) *Frame {
+// newHello builds a signed hello frame. tenant + key sign (tenant,cluster,ts) so the
+// receiver can verify the agent holds the tenant's HMAC key; ts is unix seconds.
+func newHello(cluster, tenant, agentVersion string, key []byte, ts int64, namespaces []string) *Frame {
 	return &Frame{V: ProtocolVersion, Kind: KindHello, Cluster: cluster, Hello: &HelloPayload{
 		AgentVersion: agentVersion,
 		ClusterName:  cluster,
+		Tenant:       tenant,
+		Timestamp:    ts,
+		Signature:    signHandshake(key, tenant, cluster, ts),
 		Namespaces:   namespaces,
 		Capabilities: []string{"applications", "k8s_events"},
 	}}

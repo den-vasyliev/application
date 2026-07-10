@@ -44,7 +44,7 @@ func main() {
 	var syncPeriod int64
 	var stabilizationPeriod int64
 	var enableLeaderElection bool
-	var pushEndpoint, clusterName, pushToken, pushTokenFile, pushNamespaces string
+	var pushEndpoint, clusterName, pushTenant, pushToken, pushTokenFile, pushNamespaces string
 	var pushHeartbeat int64
 	var pushInsecure, pushAllowPlaintext bool
 	flag.StringVar(&namespace, "namespace", "", "Namespace within which CRD controller is running.")
@@ -56,10 +56,11 @@ func main() {
 
 	// Push mode (ADR-0005): stream Applications + Warning events to a triage agent
 	// over an outbound WebSocket. Off unless --push-endpoint is set.
-	flag.StringVar(&pushEndpoint, "push-endpoint", "", "Triage agent WebSocket URL (wss://host/v1/cluster-agent/ws). Empty disables push mode.")
+	flag.StringVar(&pushEndpoint, "push-endpoint", "", "Triage agent WebSocket URL (wss://host/events/ws). Empty disables push mode.")
 	flag.StringVar(&clusterName, "cluster-name", "", "Cluster identifier stamped into pushed events. Required when --push-endpoint is set.")
-	flag.StringVar(&pushToken, "push-token", "", "Bearer token for the triage agent (prefer --push-token-file).")
-	flag.StringVar(&pushTokenFile, "push-token-file", "", "Path to a file containing the Bearer token.")
+	flag.StringVar(&pushTenant, "tenant", "", "Tenant this cluster belongs to; selects the triage service graph. Required when --push-endpoint is set.")
+	flag.StringVar(&pushToken, "push-token", "", "Per-tenant HMAC signing key for the handshake (prefer --push-token-file).")
+	flag.StringVar(&pushTokenFile, "push-token-file", "", "Path to a file containing the per-tenant HMAC signing key.")
 	flag.StringVar(&pushNamespaces, "push-namespaces", "", "Comma-separated namespaces to push; empty pushes all.")
 	flag.Int64Var(&pushHeartbeat, "push-heartbeat", 20, "Heartbeat interval in seconds.")
 	flag.BoolVar(&pushInsecure, "push-insecure-skip-verify", false, "Skip TLS certificate verification for a wss:// endpoint (dev only).")
@@ -112,8 +113,12 @@ func main() {
 			setupLog.Error(nil, "--cluster-name is required when --push-endpoint is set")
 			os.Exit(1)
 		}
+		if pushTenant == "" {
+			setupLog.Error(nil, "--tenant is required when --push-endpoint is set")
+			os.Exit(1)
+		}
 		if pushToken == "" && pushTokenFile == "" {
-			setupLog.Error(nil, "a token is required: set --push-token or --push-token-file")
+			setupLog.Error(nil, "an HMAC key is required: set --push-token or --push-token-file")
 			os.Exit(1)
 		}
 		nsList := push.ParseNamespaces(pushNamespaces)
@@ -123,6 +128,7 @@ func main() {
 		pusher := push.New(push.Options{
 			Endpoint:     pushEndpoint,
 			ClusterName:  clusterName,
+			Tenant:       pushTenant,
 			Token:        pushToken,
 			TokenFile:    pushTokenFile,
 			Namespaces:   nsList,
