@@ -3,20 +3,27 @@
 #
 # Makefile for application
 
-VERSION_FILE ?= VERSION-DEV
-
-include $(VERSION_FILE)
-
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
 CRD_OPTIONS ?= "crd:trivialVersions=true,crdVersions=v1"
 # Turn on the CRD_OPTIONS below to generate the v1beta1 version of the Application CRD for kubernetes < 1.16
 #CRD_OPTIONS ?= "crd:trivialVersions=true,crdVersions=v1beta1"
 
-# Releases should modify and double check these vars.
-VER ?= v${app_major}.${app_minor}.${app_patch}
+# Version/tag — git is the single source of truth (git tags). No VERSION files to
+# hand-maintain; `git describe` always reports the real version:
+#   - on a release tag commit:      v1.4.2               (exact tag)
+#   - N commits past the last tag:  v1.4.2-3-g71627cd15  (tag + distance + sha)
+#   - dirty working tree:           ...-dirty
+# Release flow: `git tag vX.Y.Z && git push origin vX.Y.Z` — CI builds the tag.
+# Override the tag for a one-off build by passing VER=... on the command line.
+VER ?= $(shell git describe --tags --dirty --always 2>/dev/null)
 ARCH ?= amd64
 ALL_ARCH = amd64 arm arm64 ppc64le s390x
 IMAGE_NAME = app-controller
+
+# Registry the local `make docker-build`/`make docker-push` targets tag against.
+# Defaults to GHCR (same as KO_DOCKER_REPO / CI). The Helm chart pulls from the ops
+# Artifact Registry; images land there via `crane copy` (see MEMORY / release docs).
+REGISTRY ?= ghcr.io/den-vasyliev
 
 ifeq ($(ARCH), amd64)
 IMAGE_TAG ?= $(VER)
@@ -25,8 +32,7 @@ IMAGE_TAG ?= $(ARCH)-$(VER)
 endif
 
 RELEASE_REMOTE ?= origin
-RELEASE_BRANCH ?= release-v${app_major}.${app_minor}
-RELEASE_TAG ?= v${app_major}.${app_minor}.${app_patch}
+RELEASE_TAG ?= $(VER)
 
 CONTROLLER_IMG ?= $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
 
@@ -271,69 +277,23 @@ clean: ## Remove build artifacts and tool binaries
 
 
 ## --------------------------------------
-## Version bumping
-## --------------------------------------
-
-.PHONY: bump-patch
-bump-patch: ## Bump patch version, commit, tag, and push
-	$(MAKE) VERSION_FILE=VERSION _bump-patch
-
-.PHONY: _bump-patch
-_bump-patch:
-	@NEW=$(shell echo $$(($(app_patch)+1))); \
-	awk -v old=$(app_patch) -v new=$$NEW \
-		'{gsub("export app_patch=" old, "export app_patch=" new)}1' \
-		VERSION > VERSION.tmp && mv VERSION.tmp VERSION; \
-	git add VERSION; \
-	git commit -m "release: bump patch to v$(app_major).$(app_minor).$$NEW"; \
-	git tag v$(app_major).$(app_minor).$$NEW; \
-	git push origin main; \
-	git push origin v$(app_major).$(app_minor).$$NEW
-
-.PHONY: bump-minor
-bump-minor: ## Bump minor version (reset patch to 0), commit, tag, and push
-	$(MAKE) VERSION_FILE=VERSION _bump-minor
-
-.PHONY: _bump-minor
-_bump-minor:
-	@NEW=$(shell echo $$(($(app_minor)+1))); \
-	awk -v om=$(app_minor) -v nm=$$NEW \
-		-v op=$(app_patch) \
-		'{gsub("export app_minor=" om, "export app_minor=" nm); \
-		  gsub("export app_patch=" op, "export app_patch=0")}1' \
-		VERSION > VERSION.tmp && mv VERSION.tmp VERSION; \
-	git add VERSION; \
-	git commit -m "release: bump minor to v$(app_major).$$NEW.0"; \
-	git tag v$(app_major).$$NEW.0; \
-	git push origin main; \
-	git push origin v$(app_major).$$NEW.0
-
-## --------------------------------------
 ## Releasing
 ## --------------------------------------
-.PHONY: release-branch
-release-branch:
-	echo "checking branch=$(RELEASE_BRANCH)"
-	git ls-remote --exit-code `git remote get-url $(RELEASE_REMOTE)` $(RELEASE_BRANCH) || make create-release-branch
-
-.PHONY: create-release-branch
-create-release-branch:
-	git fetch upstream
-	git checkout main
-	git rebase upstream/main
-	git branch -D $(RELEASE_BRANCH) || true
-	git checkout -b $(RELEASE_BRANCH)
-	git push -f $(RELEASE_REMOTE) $(RELEASE_BRANCH)
+# Git tags are the source of truth. To cut a release, tag a commit on main and push
+# the tag — CI (.github/workflows/ci.yaml) builds the multi-arch binaries + image and
+# publishes the GitHub Release. Pass the version explicitly:
+#   make release-tag RELEASE_TAG=v1.5.0
 
 .PHONY: release-tag
-release-tag: release-branch
-	git branch -D $(RELEASE_BRANCH) || true
-	git branch ${RELEASE_BRANCH} ${RELEASE_REMOTE}/${RELEASE_BRANCH}
-	git checkout $(RELEASE_BRANCH)
-	git tag -a ${RELEASE_TAG} -m "Release ${RELEASE_TAG} on branch ${RELEASE_BRANCH}"
-	git push $(RELEASE_REMOTE) ${RELEASE_TAG}
+release-tag: ## Tag the current commit and push it (RELEASE_TAG=vX.Y.Z), triggering the CI release
+	@case "$(RELEASE_TAG)" in \
+		v[0-9]*.[0-9]*.[0-9]*) ;; \
+		*) echo "RELEASE_TAG must be an explicit semver tag, e.g. make release-tag RELEASE_TAG=v1.5.0 (got '$(RELEASE_TAG)')"; exit 1 ;; \
+	esac
+	git tag -a $(RELEASE_TAG) -m "Release $(RELEASE_TAG)"
+	git push $(RELEASE_REMOTE) $(RELEASE_TAG)
 
 .PHONY: delete-release-tag
-delete-release-tag:
+delete-release-tag: ## Delete a release tag locally and on the remote (RELEASE_TAG=vX.Y.Z)
 	git tag --delete $(RELEASE_TAG)
 	git push $(RELEASE_REMOTE) :refs/tags/$(RELEASE_TAG)
