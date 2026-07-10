@@ -45,6 +45,7 @@ spec:
             {{- if .Values.push.enabled }}
             - --push-endpoint={{ required "push.endpoint is required when push.enabled" .Values.push.endpoint }}
             - --cluster-name={{ required "push.clusterName is required when push.enabled" .Values.push.clusterName }}
+            - --tenant={{ required "push.tenant is required when push.enabled" .Values.push.tenant }}
             - --push-token-file=/etc/push/token
             {{- if .Values.push.namespaces }}
             - --push-namespaces={{ .Values.push.namespaces }}

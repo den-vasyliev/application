@@ -40,8 +40,12 @@ push:
   enabled: false
   # Triage agent WebSocket URL (wss://host/v1/cluster-agent/ws).
   endpoint: ""
-  # Cluster identifier stamped into pushed events (triage source segment).
+  # Cluster identifier stamped into pushed events (triage source segment). Also the
+  # key selecting this cluster's HMAC signing key on the triage receiver.
   clusterName: ""
+  # Tenant this cluster belongs to; selects the triage service graph. Declared in the
+  # signed handshake (cryptographically bound by the per-cluster HMAC signature).
+  tenant: ""
   # Comma-separated namespaces to push. Empty pushes all namespaces.
   namespaces: ""
   # Heartbeat interval in seconds.
@@ -51,8 +55,10 @@ push:
   # Allow a plaintext ws:// endpoint (sends the bearer token unencrypted).
   # Leave false in production; the endpoint should be wss://.
   allowPlaintext: false
-  # Bearer token for the triage agent. Provide EITHER an existingSecret (with a
-  # 'token' key) OR an inline token (rendered into a Secret). existingSecret wins.
+  # Per-cluster HMAC signing key for the handshake (NOT a bearer token — it is never
+  # sent on the wire; the agent signs the hello with it). Provide EITHER an
+  # existingSecret (with a 'token' key) OR an inline value (rendered into a Secret).
+  # existingSecret wins.
   existingSecret: ""
   token: ""
 
