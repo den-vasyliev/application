@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -21,8 +23,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/util/retry"
-	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -267,6 +267,12 @@ var workloadKinds = map[string]bool{
 	"Job":                   true,
 	"CronJob":               true,
 	"Rollout":               true,
+	// Kubernetes Gateway API (gateway.networking.k8s.io)
+	"Gateway":   true,
+	"HTTPRoute": true,
+	// kagent.dev
+	"Agent":       true,
+	"ModelConfig": true,
 }
 
 func isTransitioningToReady(newStatus, curStatus *appv1beta1.ApplicationStatus) bool {

@@ -324,3 +324,136 @@ var _ = Describe("rolloutStatus", func() {
 		Expect(statusOf(int64p(4), "SomethingNew")).To(Equal(StatusUnknown))
 	})
 })
+
+// cond builds a status.conditions entry for the Gateway API / kagent tests.
+func cond(condType, status string) map[string]any {
+	return map[string]any{"type": condType, "status": status}
+}
+
+var _ = Describe("gatewayStatus", func() {
+	// Gateway is a CRD with no typed dep in this repo, so build the unstructured directly.
+	newGateway := func(conds ...map[string]any) *unstructured.Unstructured {
+		status := map[string]any{}
+		if conds != nil {
+			cs := make([]any, 0, len(conds))
+			for _, c := range conds {
+				cs = append(cs, c)
+			}
+			status["conditions"] = cs
+		}
+		u := &unstructured.Unstructured{Object: map[string]any{"status": status}}
+		u.SetAPIVersion("gateway.networking.k8s.io/v1")
+		u.SetKind("Gateway")
+		return u
+	}
+	statusOf := func(conds ...map[string]any) string {
+		res, err := gatewayStatus(newGateway(conds...))
+		Expect(err).NotTo(HaveOccurred())
+		return res
+	}
+
+	It("is Ready when Accepted and Programmed are both True", func() {
+		Expect(statusOf(cond("Accepted", "True"), cond("Programmed", "True"))).To(Equal(StatusReady))
+	})
+	It("is InProgress when Programmed is False (data plane not configured)", func() {
+		Expect(statusOf(cond("Accepted", "True"), cond("Programmed", "False"))).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when Accepted is False (invalid spec)", func() {
+		Expect(statusOf(cond("Accepted", "False"), cond("Programmed", "True"))).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when Programmed is absent", func() {
+		Expect(statusOf(cond("Accepted", "True"))).To(Equal(StatusInProgress))
+	})
+	It("ignores the deprecated Ready condition (Programmed is the health signal)", func() {
+		// Gateway API reserves "Ready" for future use; a Gateway can be serving with
+		// only Accepted+Programmed set and no Ready condition.
+		Expect(statusOf(cond("Accepted", "True"), cond("Programmed", "True"), cond("Ready", "False"))).To(Equal(StatusReady))
+	})
+	It("is InProgress when not yet reconciled (no conditions)", func() {
+		Expect(statusOf()).To(Equal(StatusInProgress))
+	})
+})
+
+var _ = Describe("routeStatus (HTTPRoute)", func() {
+	// HTTPRoute reports status per-parent under status.parents[].conditions.
+	newRoute := func(parents ...[]map[string]any) *unstructured.Unstructured {
+		status := map[string]any{}
+		if parents != nil {
+			ps := make([]any, 0, len(parents))
+			for _, conds := range parents {
+				cs := make([]any, 0, len(conds))
+				for _, c := range conds {
+					cs = append(cs, c)
+				}
+				ps = append(ps, map[string]any{"conditions": cs})
+			}
+			status["parents"] = ps
+		}
+		u := &unstructured.Unstructured{Object: map[string]any{"status": status}}
+		u.SetAPIVersion("gateway.networking.k8s.io/v1")
+		u.SetKind("HTTPRoute")
+		return u
+	}
+	statusOf := func(parents ...[]map[string]any) string {
+		res, err := routeStatus(newRoute(parents...))
+		Expect(err).NotTo(HaveOccurred())
+		return res
+	}
+	healthyParent := []map[string]any{cond("Accepted", "True"), cond("ResolvedRefs", "True")}
+
+	It("is Ready when a parent is Accepted with resolved refs", func() {
+		Expect(statusOf(healthyParent)).To(Equal(StatusReady))
+	})
+	It("is InProgress when the backend can't be resolved (ResolvedRefs False)", func() {
+		Expect(statusOf([]map[string]any{cond("Accepted", "True"), cond("ResolvedRefs", "False")})).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when the route is not accepted by the listener", func() {
+		Expect(statusOf([]map[string]any{cond("Accepted", "False"), cond("ResolvedRefs", "True")})).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when any attached parent is degraded, even if another is healthy", func() {
+		badParent := []map[string]any{cond("Accepted", "True"), cond("ResolvedRefs", "False")}
+		Expect(statusOf(healthyParent, badParent)).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when there are no parents yet (not reconciled)", func() {
+		Expect(statusOf()).To(Equal(StatusInProgress))
+	})
+})
+
+var _ = Describe("kagentStatus (Agent / ModelConfig)", func() {
+	// kagent resources report health via a positive-polarity Accepted condition.
+	newAgent := func(kind string, conds ...map[string]any) *unstructured.Unstructured {
+		status := map[string]any{}
+		if conds != nil {
+			cs := make([]any, 0, len(conds))
+			for _, c := range conds {
+				cs = append(cs, c)
+			}
+			status["conditions"] = cs
+		}
+		u := &unstructured.Unstructured{Object: map[string]any{"status": status}}
+		u.SetAPIVersion("kagent.dev/v1alpha2")
+		u.SetKind(kind)
+		return u
+	}
+	statusOf := func(kind string, conds ...map[string]any) string {
+		res, err := kagentStatus(newAgent(kind, conds...))
+		Expect(err).NotTo(HaveOccurred())
+		return res
+	}
+
+	It("Agent is Ready when Accepted is True", func() {
+		Expect(statusOf("Agent", cond("Accepted", "True"))).To(Equal(StatusReady))
+	})
+	It("Agent is InProgress when Accepted is False", func() {
+		Expect(statusOf("Agent", cond("Accepted", "False"))).To(Equal(StatusInProgress))
+	})
+	It("ModelConfig is Ready when Accepted is True", func() {
+		Expect(statusOf("ModelConfig", cond("Accepted", "True"))).To(Equal(StatusReady))
+	})
+	It("ModelConfig is InProgress when the provider secret is unresolved (Accepted False)", func() {
+		Expect(statusOf("ModelConfig", cond("Accepted", "False"))).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when not yet reconciled (no conditions)", func() {
+		Expect(statusOf("Agent")).To(Equal(StatusInProgress))
+	})
+})

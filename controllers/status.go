@@ -49,6 +49,14 @@ func status(u *unstructured.Unstructured) (string, error) {
 		return cronJobStatus(u)
 	case "Rollout.argoproj.io":
 		return rolloutStatus(u)
+	case "Gateway.gateway.networking.k8s.io":
+		return gatewayStatus(u)
+	case "HTTPRoute.gateway.networking.k8s.io":
+		return routeStatus(u)
+	case "Agent.kagent.dev":
+		return kagentStatus(u)
+	case "ModelConfig.kagent.dev":
+		return kagentStatus(u)
 	default:
 		return statusFromStandardConditions(u)
 	}
@@ -367,6 +375,127 @@ func rolloutStatus(u *unstructured.Unstructured) (string, error) {
 	default:
 		return StatusUnknown, nil
 	}
+}
+
+// Kubernetes Gateway API — Gateway (gateway.networking.k8s.io).
+//
+// Gateway API resources use positive-polarity conditions (Accepted/Programmed/
+// ResolvedRefs), unlike the workload kinds' Ready/InProgress. A Gateway is serving
+// once the controller has Accepted it and Programmed the data plane. We gate Ready
+// on both being True.
+//
+// We do NOT gate on the "Ready" condition: Gateway API reserves "Ready" for future
+// use and current implementations don't set it (Programmed is the health signal).
+// We also don't require ResolvedRefs on the Gateway itself — a listener with an
+// unresolved certificate ref is a per-listener problem the Programmed condition
+// already reflects when it blocks the data plane. A Gateway that has not yet been
+// reconciled (no conditions) is InProgress.
+func gatewayStatus(u *unstructured.Unstructured) (string, error) {
+	return readyFromPositiveConditions(u, "Accepted", "Programmed")
+}
+
+// Kubernetes Gateway API — HTTPRoute (gateway.networking.k8s.io).
+//
+// Route status is per-parent (status.parents[].conditions), not a top-level
+// status.conditions like the Gateway. A route is serving when at least one parent
+// has Accepted=True and ResolvedRefs=True: attached to a listener with all its
+// backendRefs resolved. If any attached parent reports Accepted=False or
+// ResolvedRefs=False (e.g. BackendNotFound), the route is InProgress. A route with
+// no parents yet (not reconciled) is InProgress.
+func routeStatus(u *unstructured.Unstructured) (string, error) {
+	parents, found, err := unstructured.NestedSlice(u.Object, "status", "parents")
+	if err != nil {
+		return StatusUnknown, err
+	}
+	if !found || len(parents) == 0 {
+		return StatusInProgress, nil
+	}
+
+	sawHealthyParent := false
+	for _, p := range parents {
+		parent, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		conds, found, err := unstructured.NestedSlice(parent, "conditions")
+		if err != nil {
+			return StatusUnknown, err
+		}
+		if !found {
+			continue
+		}
+		accepted, resolved := conditionTrue(conds, "Accepted"), conditionTrue(conds, "ResolvedRefs")
+		// A parent that explicitly rejected the route or failed to resolve its
+		// backends is a genuine problem — surface it as InProgress.
+		if conditionFalse(conds, "Accepted") || conditionFalse(conds, "ResolvedRefs") {
+			return StatusInProgress, nil
+		}
+		if accepted && resolved {
+			sawHealthyParent = true
+		}
+	}
+	if sawHealthyParent {
+		return StatusReady, nil
+	}
+	return StatusInProgress, nil
+}
+
+// kagent.dev — Agent and ModelConfig (kagent.dev/v1alpha2).
+//
+// kagent controllers report health via a positive-polarity Accepted condition on
+// status.conditions (Kubernetes-conventional). Ready once Accepted=True: the
+// controller validated the resource (e.g. resolved the ModelConfig secret / built
+// the agent deployment). Accepted=False or not-yet-reconciled (no conditions) is
+// InProgress.
+func kagentStatus(u *unstructured.Unstructured) (string, error) {
+	return readyFromPositiveConditions(u, "Accepted")
+}
+
+// readyFromPositiveConditions returns Ready only when every named condition is
+// present on status.conditions with Status=True. Any missing or non-True named
+// condition yields InProgress. Used by resources (Gateway API, kagent) that report
+// health via positive-polarity conditions rather than the workload Ready/InProgress
+// convention handled by statusFromStandardConditions.
+func readyFromPositiveConditions(u *unstructured.Unstructured, required ...string) (string, error) {
+	conds, found, err := unstructured.NestedSlice(u.Object, "status", "conditions")
+	if err != nil {
+		return StatusUnknown, err
+	}
+	if !found {
+		return StatusInProgress, nil
+	}
+	for _, name := range required {
+		if !conditionTrue(conds, name) {
+			return StatusInProgress, nil
+		}
+	}
+	return StatusReady, nil
+}
+
+// conditionTrue reports whether the named condition exists in conds with Status=True.
+func conditionTrue(conds []any, name string) bool {
+	return conditionHasStatus(conds, name, "True")
+}
+
+// conditionFalse reports whether the named condition exists in conds with Status=False.
+func conditionFalse(conds []any, name string) bool {
+	return conditionHasStatus(conds, name, "False")
+}
+
+func conditionHasStatus(conds []any, name, status string) bool {
+	for _, c := range conds {
+		cond, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		t, _ := cond["type"].(string)
+		if t != name {
+			continue
+		}
+		s, _ := cond["status"].(string)
+		return s == status
+	}
+	return false
 }
 
 func hasEmptyIngressIP(ingress []corev1.LoadBalancerIngress) bool {

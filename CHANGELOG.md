@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Component status support for the Kubernetes Gateway API (`Gateway`,
+  `HTTPRoute`) and kagent.dev (`Agent`, `ModelConfig`). These kinds report
+  health via positive-polarity conditions (`Accepted`/`Programmed`/
+  `ResolvedRefs`) rather than the workload `Ready`/`InProgress` convention:
+  - `Gateway` is Ready when `Accepted=True` and `Programmed=True` (the
+    deprecated `Ready` condition is ignored — `Programmed` is the health signal).
+  - `HTTPRoute` is Ready when at least one attached parent has `Accepted=True`
+    and `ResolvedRefs=True`; a parent with `Accepted=False` or `ResolvedRefs=False`
+    (e.g. `BackendNotFound`) reports InProgress.
+  - `Agent`/`ModelConfig` are Ready when `Accepted=True`.
+  - All four drive the Application's `Ready` condition (added to `workloadKinds`)
+    and get a real-time dynamic watch. The controller remains a read-only
+    aggregator — it sets no `ownerReferences`, so removing an Application never
+    cascades into deleting these resources.
+
 ## [1.4.1] - 2026-07-09
 
 ### Security
@@ -28,7 +45,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Push mode** (`push/` package, [ADR-0005](doc/adr/0005-outbound-push-mode.md)):
+- **Push mode** (`push/` package, [ADR-0005](docs/adr/0005-outbound-push-mode.md)):
   when `--push-endpoint` is set, the controller dials a triage agent over an
   outbound WebSocket and streams its Application inventory + status deltas +
   Kubernetes Warning events. For clusters with no inbound API access. Opt-in and
@@ -173,7 +190,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   list), so arbitrary CRD kinds such as Argo `Rollout` are watched the same way as
   built-in workloads. A healthy scale-up still produces no status change (see ADR-0003);
   the faster trigger matters for genuine degrades/recoveries. The resync remains as a
-  backstop. See [ADR-0004](doc/adr/0004-dynamic-component-watches.md). Proven by an
+  backstop. See [ADR-0004](docs/adr/0004-dynamic-component-watches.md). Proven by an
   envtest that sets `SyncPeriod` to one hour and asserts a component-status change still
   reconciles the Application within seconds.
 
@@ -213,7 +230,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   incident. Applies to Deployment, StatefulSet, ReplicaSet, ReplicationController, and
   DaemonSet (node-join). Scaled-to-zero still resolves to `Ready`, and genuine failures
   (nothing available / `ReplicaFailure` / unavailable pods) still report `InProgress`.
-  See [ADR-0003](doc/adr/0003-scale-up-readiness-flap.md) (Accepted). _(live on image tag
+  See [ADR-0003](docs/adr/0003-scale-up-readiness-flap.md) (Accepted). _(live on image tag
   `25171c3`; `main` rebuilt as `1f3ab67`)_
 
 - **Scale-up flap, part 2: removed the `ObservedGeneration` gate from the readiness
@@ -235,7 +252,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `InProgress`. Additionally, a **scaled-to-zero Rollout** (`spec.replicas=0`) is now
   `Ready` regardless of phase, so a parked Rollout with a `Degraded`/`InvalidSpec` phase
   (e.g. `example-parked-rollout`) doesn't degrade its app. Adds the first `rolloutStatus` unit
-  specs (the kind previously had none). See [ADR-0003](doc/adr/0003-scale-up-readiness-flap.md).
+  specs (the kind previously had none). See [ADR-0003](docs/adr/0003-scale-up-readiness-flap.md).
 
 ### Changed
 
