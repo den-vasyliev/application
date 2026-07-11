@@ -351,30 +351,87 @@ func rolloutStatus(u *unstructured.Unstructured) (string, error) {
 	if err != nil {
 		return StatusUnknown, err
 	}
-	if found && replicas == 0 {
+	// Argo defaults an unset spec.replicas to 1.
+	desired := int64(1)
+	if found {
+		desired = replicas
+	}
+	if desired == 0 {
 		return StatusReady, nil
 	}
 
-	phase, found, err := unstructured.NestedString(u.Object, "status", "phase")
+	phase, phaseFound, err := unstructured.NestedString(u.Object, "status", "phase")
 	if err != nil {
 		return StatusUnknown, err
 	}
-	if !found || phase == "" {
+
+	// A phase Argo itself calls a failure is authoritative — report degraded immediately,
+	// don't second-guess it with replica counts.
+	switch phase {
+	case "Degraded", "Error":
+		return StatusInProgress, nil
+	}
+
+	// For every other phase (Healthy/Inactive/Progressing/Paused/empty/unknown) the phase
+	// alone is NOT sufficient to declare Ready. `Progressing` in particular covers BOTH a
+	// healthy scale-up/canary step (existing pods keep serving) AND a rollout whose new
+	// pods are crash-looping and never become available — Argo sits in `Progressing` for
+	// the whole progressDeadlineSeconds window before flipping to `Degraded`. Trusting the
+	// phase (the 1.2.0..1.3.x behavior) reported such a down rollout as Ready, so the
+	// Application CR never transitioned and downstream monitoring never saw the outage.
+	//
+	// The discriminator — same one deploymentStatus uses — is actual serving capacity:
+	// the `Available` condition and `availableReplicas`. A Progressing rollout that is
+	// still serving its full desired complement is a healthy scale-up (Ready); one serving
+	// fewer than desired is genuinely mid-degrade (InProgress).
+	if hasAvailableConditionFalse(u) {
+		return StatusInProgress, nil
+	}
+	available, _, err := unstructured.NestedInt64(u.Object, "status", "availableReplicas")
+	if err != nil {
+		return StatusUnknown, err
+	}
+	if available >= desired {
+		return StatusReady, nil
+	}
+	// Serving fewer replicas than desired and not explicitly scaled to zero: the rollout is
+	// not fully available. This catches the down/crash-looping rollout that stays in
+	// `Progressing`. An empty/unknown phase with no availability also lands here (InProgress),
+	// preserving the prior "missing phase -> InProgress" behavior.
+	if !phaseFound || phase == "" {
 		return StatusInProgress, nil
 	}
 	switch phase {
-	// Progressing/Paused are NOT degradation: an HPA scale-up, a canary/blue-green step,
-	// or a healthy pause all sit in these phases while the Rollout keeps serving (its
-	// Available condition stays True). Treating them as InProgress flapped the Application
-	// to degraded on every scale-up — the same false positive ADR-0003 fixed for
-	// Deployments. Only Degraded/Error (a real failure) report InProgress.
 	case "Healthy", "Inactive", "Progressing", "Paused":
-		return StatusReady, nil
-	case "Degraded", "Error":
 		return StatusInProgress, nil
 	default:
+		// Genuinely unrecognized phase with insufficient availability — surface as Unknown
+		// so an unmapped Argo phase is visible rather than silently Ready.
 		return StatusUnknown, nil
 	}
+}
+
+// hasAvailableConditionFalse reports whether the object carries a status.conditions entry
+// of type "Available" with status "False" — Argo Rollout mirrors the Deployment
+// convention, writing an Available condition alongside the phase. An explicit False is an
+// authoritative "not serving" signal regardless of phase or replica counters.
+func hasAvailableConditionFalse(u *unstructured.Unstructured) bool {
+	conds, found, err := unstructured.NestedSlice(u.Object, "status", "conditions")
+	if err != nil || !found {
+		return false
+	}
+	for _, c := range conds {
+		cond, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _, _ := unstructured.NestedString(cond, "type"); t != "Available" {
+			continue
+		}
+		s, _, _ := unstructured.NestedString(cond, "status")
+		return s == "False"
+	}
+	return false
 }
 
 // Kubernetes Gateway API — Gateway (gateway.networking.k8s.io).

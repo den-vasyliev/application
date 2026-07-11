@@ -266,10 +266,15 @@ var _ = Describe("daemonsetStatus", func() {
 
 var _ = Describe("rolloutStatus", func() {
 	// Rollout is a CRD with no typed dep in this repo, so build the unstructured directly.
-	newRollout := func(replicas *int64, phase string) *unstructured.Unstructured {
+	// A real Argo Rollout carries status.availableReplicas and a status.conditions[]
+	// Available entry (mirroring Deployment); readiness must be decided on those, not on
+	// status.phase alone. newRollout takes availableReplicas so tests model actual serving
+	// capacity — the signal the 1.2.0..1.3.x phase-only implementation ignored, which is
+	// why it (and its tests) missed a Progressing-but-down rollout.
+	newRollout := func(replicas *int64, phase string, available int64) *unstructured.Unstructured {
 		obj := map[string]interface{}{
 			"spec":   map[string]interface{}{},
-			"status": map[string]interface{}{},
+			"status": map[string]interface{}{"availableReplicas": available},
 		}
 		if replicas != nil {
 			obj["spec"].(map[string]interface{})["replicas"] = *replicas
@@ -282,25 +287,61 @@ var _ = Describe("rolloutStatus", func() {
 		u.SetKind("Rollout")
 		return u
 	}
+	// newRolloutCond builds a Rollout with an explicit Available condition (type/status).
+	newRolloutCond := func(replicas int64, phase, availStatus string, available int64) *unstructured.Unstructured {
+		obj := map[string]interface{}{
+			"spec": map[string]interface{}{"replicas": replicas},
+			"status": map[string]interface{}{
+				"availableReplicas": available,
+				"conditions": []interface{}{
+					map[string]interface{}{"type": "Available", "status": availStatus},
+				},
+			},
+		}
+		if phase != "" {
+			obj["status"].(map[string]interface{})["phase"] = phase
+		}
+		u := &unstructured.Unstructured{Object: obj}
+		u.SetAPIVersion("argoproj.io/v1alpha1")
+		u.SetKind("Rollout")
+		return u
+	}
 	int64p := func(i int64) *int64 { return &i }
+	// statusOf: fully-serving rollout (availableReplicas == desired) unless a case needs otherwise.
 	statusOf := func(replicas *int64, phase string) string {
-		res, err := rolloutStatus(newRollout(replicas, phase))
+		desired := int64(0)
+		if replicas != nil {
+			desired = *replicas
+		}
+		res, err := rolloutStatus(newRollout(replicas, phase, desired))
+		Expect(err).NotTo(HaveOccurred())
+		return res
+	}
+	statusOfAvail := func(replicas *int64, phase string, available int64) string {
+		res, err := rolloutStatus(newRollout(replicas, phase, available))
+		Expect(err).NotTo(HaveOccurred())
+		return res
+	}
+	statusOfCond := func(replicas int64, phase, availStatus string, available int64) string {
+		res, err := rolloutStatus(newRolloutCond(replicas, phase, availStatus, available))
 		Expect(err).NotTo(HaveOccurred())
 		return res
 	}
 
-	It("is Ready when Healthy", func() {
+	It("is Ready when Healthy and fully available", func() {
 		Expect(statusOf(int64p(4), "Healthy")).To(Equal(StatusReady))
 	})
-	It("is Ready when Inactive", func() {
+	It("is Ready when Inactive and fully available", func() {
 		Expect(statusOf(int64p(4), "Inactive")).To(Equal(StatusReady))
 	})
-	It("stays Ready while Progressing (scale-up / canary step, still serving)", func() {
+	It("stays Ready while Progressing when still serving the full complement", func() {
 		// The Rollout equivalent of the Deployment 2->3 flap: Progressing during an HPA
-		// scale-up must not degrade the Application while existing pods keep serving.
+		// scale-up must not degrade the Application while existing pods keep serving. Here
+		// the new pod hasn't bumped availableReplicas yet is modeled as "already caught up"
+		// (available == desired) — a genuinely healthy step.
 		Expect(statusOf(int64p(5), "Progressing")).To(Equal(StatusReady))
 	})
-	It("stays Ready while Paused (blue/green or canary pause, serving)", func() {
+	It("stays Ready while Paused when serving the full complement", func() {
 		Expect(statusOf(int64p(4), "Paused")).To(Equal(StatusReady))
 	})
 	It("is InProgress when Degraded", func() {
@@ -318,10 +359,43 @@ var _ = Describe("rolloutStatus", func() {
 		Expect(statusOf(int64p(0), "")).To(Equal(StatusReady))
 	})
 	It("is InProgress when phase is missing and not scaled to zero", func() {
-		Expect(statusOf(int64p(4), "")).To(Equal(StatusInProgress))
+		// No phase and nothing available -> not serving -> InProgress (preserves old behavior).
+		Expect(statusOfAvail(int64p(4), "", 0)).To(Equal(StatusInProgress))
 	})
-	It("is Unknown on an unrecognized phase", func() {
-		Expect(statusOf(int64p(4), "SomethingNew")).To(Equal(StatusUnknown))
+
+	// --- Regression: the down-but-Progressing rollout (the explore-persona outage) ---
+	//
+	// A Rollout whose new pods crash-loop sits in `Progressing` (NOT yet `Degraded`) for the
+	// whole progressDeadlineSeconds window while serving fewer than desired replicas. The
+	// 1.2.0..1.3.x phase-only rolloutStatus reported this as Ready, so the Application CR
+	// stayed Ready N/N and the triage agent never opened an incident. These cases pin the
+	// availability-based verdict that fixes it.
+	It("is InProgress when Progressing but serving zero replicas (rollout is down)", func() {
+		Expect(statusOfAvail(int64p(4), "Progressing", 0)).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when Progressing but only partially available (available < desired)", func() {
+		Expect(statusOfAvail(int64p(4), "Progressing", 2)).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when Paused but serving zero replicas", func() {
+		Expect(statusOfAvail(int64p(4), "Paused", 0)).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when Healthy phase is stale but no replicas are available", func() {
+		// Defends against a Rollout whose controller left a stale Healthy phase while the
+		// underlying ReplicaSet lost all pods.
+		Expect(statusOfAvail(int64p(3), "Healthy", 0)).To(Equal(StatusInProgress))
+	})
+	It("is InProgress when the Available condition is explicitly False, regardless of phase", func() {
+		// An explicit Available=False is authoritative even if availableReplicas is stale/high.
+		Expect(statusOfCond(4, "Progressing", "False", 4)).To(Equal(StatusInProgress))
+	})
+	It("is Ready when Progressing with Available=True and full replicas", func() {
+		Expect(statusOfCond(4, "Progressing", "True", 4)).To(Equal(StatusReady))
+	})
+	It("defaults desired to 1 when spec.replicas is unset and reports InProgress with none available", func() {
+		Expect(statusOfAvail(nil, "Progressing", 0)).To(Equal(StatusInProgress))
+	})
+	It("is Unknown on an unrecognized phase even when insufficient replicas", func() {
+		Expect(statusOfAvail(int64p(4), "SomethingNew", 0)).To(Equal(StatusUnknown))
 	})
 })
 

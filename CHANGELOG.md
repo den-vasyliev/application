@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Argo Rollout readiness no longer reports a down rollout as Ready (false
+  negative).** `rolloutStatus` was phase-only since 1.2.0: it mapped
+  `Progressing` and `Paused` straight to `Ready`. But `Progressing` is not
+  exclusively a healthy scale-up/canary step — a Rollout whose new pods
+  crash-loop sits in `Progressing` for the entire `progressDeadlineSeconds`
+  window (and can stay there indefinitely if stuck) *before* Argo flips it to
+  `Degraded`. Throughout that window the controller reported the Rollout — and
+  therefore its Application's `Ready` condition — as `Ready`, so the Application
+  CR never transitioned and downstream consumers (e.g. the triage agent) never
+  saw the outage. Observed in production on `explore-persona`: the Rollout was
+  down while the Application CR stayed `Ready 4/4`.
+
+  The fix decides readiness on actual serving capacity — the same signal
+  `deploymentStatus` uses — not on the phase:
+  - `Degraded`/`Error` still report `InProgress` (authoritative failure).
+  - Scaled-to-zero (`spec.replicas=0`) is still `Ready`.
+  - For every other phase (`Healthy`/`Inactive`/`Progressing`/`Paused`/empty):
+    an explicit `Available=False` condition → `InProgress`; otherwise
+    `availableReplicas >= spec.replicas` → `Ready`, and `availableReplicas <
+    spec.replicas` → `InProgress`. This keeps the scale-up/canary flap fix (a
+    Progressing rollout still serving its full complement stays `Ready`) while
+    catching the down/partially-available rollout.
+
+  Regression coverage: the prior `rolloutStatus` unit specs were phase-only —
+  they never set `availableReplicas` or an `Available` condition, so they
+  encoded the very blind spot the bug lived in and could not catch it. New
+  specs drive a `Progressing` rollout with `availableReplicas < desired` (down
+  and partially-available), a stale-`Healthy` rollout with zero available, and
+  an explicit `Available=False`, all asserting `InProgress`. They fail on the
+  1.2.0..1.3.x code and pass on the fix.
+
+  **Affected releases: `1.2.0` through `1.3.8` (and image tags `25171c3` /
+  `1f3ab67` onward) carry this rollout false-negative.** A cluster running any
+  of them can have a genuinely-down Argo Rollout reported healthy. Upgrade to a
+  build containing this fix, or roll back to a pre-`25171c3` build (e.g.
+  `d3d8790`) as an interim measure.
+
 ### Added
 
 - Component status support for the Kubernetes Gateway API (`Gateway`,
@@ -25,6 +64,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.4.1] - 2026-07-09
 
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
+
 ### Security
 
 - Push mode now rejects a non-`wss://` `--push-endpoint` at startup so the bearer
@@ -42,6 +83,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - README rewritten; removed dead fork-scaffold files.
 
 ## [1.4.0] - 2026-07-09
+
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
 
 ### Added
 
@@ -75,6 +118,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.3.8] - 2026-06-30
 
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
+
 ### Fixed
 
 - Reverted the `--enable-leader-election` default back to `false` (it was changed to
@@ -83,6 +128,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Leader election remains available via the flag for multi-replica deployments.
 
 ## [1.3.7] - 2026-06-30
+
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
 
 ### Changed
 
@@ -104,6 +151,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.3.6] - 2026-06-25
 
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
+
 ### Changed
 
 - Log levels cleaned up:
@@ -115,6 +164,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     chatter (moved here from debug; it can't name the kind, so it's noise).
 
 ## [1.3.5] - 2026-06-25
+
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
 
 ### Changed
 
@@ -129,6 +180,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.3.4] - 2026-06-25
 
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
+
 ### Changed
 
 - Silenced the framework's `Starting EventSource` log flood. With one dynamic watch per
@@ -142,6 +195,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.3.3] - 2026-06-25
 
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
+
 ### Changed
 
 - Moved the `registered dynamic component watch` and `NoMappingForGK — skipping` log
@@ -150,6 +205,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.3.2] - 2026-06-25
 
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
+
 ### Changed
 
 - Demoted the `registered dynamic component watch` and `NoMappingForGK — skipping` log
@@ -157,6 +214,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--zap-log-level=debug`.
 
 ## [1.3.1] - 2026-06-25
+
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
 
 ### Changed
 
@@ -179,6 +238,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.3.0] - 2026-06-25
 
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
+
 ### Added
 
 - **Real-time reconcile on component changes via dynamic watches.** The controller now
@@ -195,6 +256,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reconciles the Application within seconds.
 
 ## [1.2.1] - 2026-06-25
+
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
 
 ### Fixed
 
@@ -219,6 +282,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   so the real "condition-not-yet-published" window was never exercised.
 
 ## [1.2.0] - 2026-06-25
+
+> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
 
 ### Fixed
 
