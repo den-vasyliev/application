@@ -7,7 +7,7 @@ description: |
   outbound WebSocket for clusters with no inbound API access (push mode, ADR-0005).
 type: application
 version: 0.1.0
-appVersion: "1.4.1"
+appVersion: "1.4.3"
 keywords:
   - application
   - controller

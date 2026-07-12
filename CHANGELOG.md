@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-07-12
+
 ### Fixed
 
 - **Argo Rollout readiness no longer reports a down rollout as Ready (false
@@ -39,11 +41,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   an explicit `Available=False`, all asserting `InProgress`. They fail on the
   1.2.0..1.3.x code and pass on the fix.
 
-  **Affected releases: `1.2.0` through `1.3.8` (and image tags `25171c3` /
+  **Affected releases: `1.2.0` through `1.4.2` (and image tags `25171c3` /
   `1f3ab67` onward) carry this rollout false-negative.** A cluster running any
-  of them can have a genuinely-down Argo Rollout reported healthy. Upgrade to a
-  build containing this fix, or roll back to a pre-`25171c3` build (e.g.
-  `d3d8790`) as an interim measure.
+  of them can have a genuinely-down Argo Rollout reported healthy. Upgrade to
+  `1.4.3` or later, or roll back to a pre-`25171c3` build (e.g. `d3d8790`) as an
+  interim measure.
 
 ### Added
 
@@ -62,9 +64,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     aggregator — it sets no `ownerReferences`, so removing an Application never
     cascades into deleting these resources.
 
-## [1.4.1] - 2026-07-09
+- Version is now derived from `git describe` at build time; the standalone
+  `VERSION`/`VERSION-DEV` files were dropped.
 
-> **⚠ Known bug (rollout false-negative):** a down Argo Rollout can be reported `Ready` — see the Unreleased `Fixed` entry. Introduced in 1.2.0; fixed post-1.4.1.
+### Changed
+
+- **BREAKING (push mode): the cluster-agent handshake is now HMAC-signed with a
+  per-tenant key, replacing the plain bearer token.** The agent signs
+  `(tenant, clusterName, timestamp)` with its tenant's key so the triage
+  receiver can verify key possession and route pushed events to that tenant's
+  service graph. `--push-token`/`--push-token-file` now carry the per-cluster
+  HMAC signing **key** (used to sign; never sent on the wire) rather than a
+  bearer token, and a new `--tenant` flag is **required** whenever
+  `--push-endpoint` is set. The default endpoint help now points at
+  `/events/ws`. Chart: new `push.tenant` (required when `push.enabled`);
+  `push.token` is documented as the HMAC signing key and `clusterName` selects
+  the receiver-side key. `push/hmac.go` is byte-identical to the triage
+  receiver's `internal/remoteagent/hmac.go` (separate modules — keep in sync).
+  Existing push deployments must set `push.tenant` and provision the matching
+  per-cluster key on the receiver before upgrading.
+
+## [1.4.1] - 2026-07-09
 
 ### Security
 
