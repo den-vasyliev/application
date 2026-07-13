@@ -204,7 +204,7 @@ func (p *Pusher) runOnce(ctx context.Context) (connected bool, err error) {
 	defer cancel()
 
 	p.mu.Lock()
-	p.sendC = make(chan *Frame, 256)
+	p.sendC = make(chan *Frame, 4096)
 	sendC := p.sendC
 	p.mu.Unlock()
 
