@@ -81,6 +81,12 @@ spec:
       serviceAccountName: {{ include "app-controller.fullname" . }}-fluentbit
       tolerations:
         {{- toYaml .Values.fluentbit.tolerations | nindent 8 }}
+      {{- with .Values.fluentbit.nodeSelector }}
+      # Scope log collection to a node subset (e.g. a pilot node) — a DaemonSet
+      # only sees its own node's /var/log, so this trades coverage for footprint.
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: fluent-bit
           image: "{{ .Values.fluentbit.image.repository }}:{{ .Values.fluentbit.image.tag }}"

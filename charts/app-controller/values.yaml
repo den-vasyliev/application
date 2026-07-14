@@ -129,6 +129,9 @@ fluentbit:
     - kube-public
   tolerations:
     - operator: Exists
+  # Scope the DaemonSet to a node subset (e.g. one pilot node). Empty = all nodes.
+  # Note: log collection is per-node — pods on unselected nodes are invisible.
+  nodeSelector: {}
   pipeline:
     # Regex (Fluent Bit / Onigmo syntax) matched against the merged log record's
     # `log` field to classify a line as an error or a warn. Defaults cover common
