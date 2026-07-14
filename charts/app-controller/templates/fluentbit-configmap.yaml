@@ -22,9 +22,15 @@ data:
     # underlying log lines, so log_to_metrics sees one record per real message.
     [INPUT]
         Name              tail
+        {{- if .Values.fluentbit.includeNamespaces }}
+        {{- /* Allowlist mode: tail only the named namespaces' logs. Excludes are
+               irrelevant here — nothing outside the list is read at all. */}}
+        Path              {{ range $i, $ns := .Values.fluentbit.includeNamespaces }}{{ if $i }},{{ end }}/var/log/containers/*_{{ $ns }}_*.log{{ end }}
+        {{- else }}
         Path              /var/log/containers/*.log
         {{- with .Values.fluentbit.excludeNamespaces }}
         Exclude_Path      {{ range $i, $ns := . }}{{ if $i }},{{ end }}/var/log/containers/*_{{ $ns }}_*.log{{ end }}
+        {{- end }}
         {{- end }}
         multiline.parser  cri
         Tag               kube.*

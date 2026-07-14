@@ -123,6 +123,9 @@ fluentbit:
   # Namespaces the tail input's kubernetes filter enrichment should ignore (their log
   # lines are still tailed — filtering happens in the kubernetes filter's exclusion —
   # but no error/warn/total counters are produced for them).
+  # Allowlist: when non-empty, tail ONLY these namespaces (excludeNamespaces is
+  # then ignored — nothing else is read). Empty = tail all minus excludes.
+  includeNamespaces: []
   excludeNamespaces:
     - kube-system
     - kube-node-lease
