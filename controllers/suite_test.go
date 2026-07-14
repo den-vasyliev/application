@@ -103,7 +103,6 @@ func NewReconciler(mgr manager.Manager) *ApplicationReconciler {
 	return &ApplicationReconciler{
 		Client: mgr.GetClient(),
 		Mapper: mgr.GetRESTMapper(),
-		Scheme: mgr.GetScheme(),
 	}
 }
 

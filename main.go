@@ -8,6 +8,8 @@ import (
 	"os"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -16,6 +18,7 @@ import (
 	"sigs.k8s.io/application/push"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	// +kubebuilder:scaffold:imports
@@ -44,6 +47,7 @@ func main() {
 	var syncPeriod int64
 	var stabilizationPeriod int64
 	var enableLeaderElection bool
+	var concurrentReconciles int
 	var pushEndpoint, clusterName, pushTenant, pushToken, pushTokenFile, pushNamespaces string
 	var pushHeartbeat int64
 	var pushInsecure, pushAllowPlaintext bool
@@ -53,6 +57,8 @@ func main() {
 	flag.Int64Var(&stabilizationPeriod, "stabilization-period", 30, "Seconds to wait before transitioning an Application to Ready, to avoid flapping.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller app-controller. Enabling this will ensure there is only one active controller app-controller.")
+	flag.IntVar(&concurrentReconciles, "concurrent-reconciles", 4,
+		"Maximum number of Applications reconciled in parallel. Reconciles of different Applications are independent, so this is safe to raise.")
 
 	// Push mode (ADR-0005): stream Applications + Warning events to a triage agent
 	// over an outbound WebSocket. Off unless --push-endpoint is set.
@@ -79,6 +85,22 @@ func main() {
 	if namespace != "" {
 		cacheOpts.DefaultNamespaces = map[string]cache.Config{namespace: {}}
 	}
+	// managedFields are often 30-40% of an object's serialized size and the controller
+	// never reads them; stripping them before they're committed to the informer cache
+	// cuts steady-state memory noticeably across every watched GVK.
+	cacheOpts.DefaultTransform = cache.TransformStripManagedFields()
+
+	// Push mode's pusher registers GetInformer(&corev1.Event{}), which by default caches
+	// EVERY Event cluster-wide — the highest-churn resource in most clusters. Scope the
+	// informer itself to Warning events at the cache level; the pusher's own
+	// e.Type != EventTypeWarning check in onEvent stays as defense in depth. Only set this
+	// in push mode: the Event informer is never started otherwise, but be explicit rather
+	// than relying on that.
+	if pushEndpoint != "" {
+		cacheOpts.ByObject = map[client.Object]cache.ByObject{
+			&corev1.Event{}: {Field: fields.OneTermEqualSelector("type", corev1.EventTypeWarning)},
+		}
+	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:           scheme,
@@ -86,6 +108,12 @@ func main() {
 		LeaderElection:   enableLeaderElection,
 		LeaderElectionID: "app-controller",
 		Cache:            cacheOpts,
+		// The dynamic component watches (ensureComponentWatches) already run informers
+		// for every component GVK an Application declares. Without this, the default
+		// controller-runtime v0.19 client bypasses the cache for unstructured
+		// reads/lists, so fetchComponentListResources would issue a live LIST to the API
+		// server on every single reconcile instead of reading from the informer cache.
+		Client: client.Options{Cache: &client.CacheOptions{Unstructured: true}},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start app-controller")
@@ -93,10 +121,10 @@ func main() {
 	}
 
 	if err = (&controllers.ApplicationReconciler{
-		Client:              mgr.GetClient(),
-		Mapper:              mgr.GetRESTMapper(),
-		Scheme:              mgr.GetScheme(),
-		StabilizationPeriod: time.Duration(stabilizationPeriod) * time.Second,
+		Client:               mgr.GetClient(),
+		Mapper:               mgr.GetRESTMapper(),
+		StabilizationPeriod:  time.Duration(stabilizationPeriod) * time.Second,
+		ConcurrentReconciles: concurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Application")
 		os.Exit(1)

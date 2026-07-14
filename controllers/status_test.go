@@ -92,6 +92,19 @@ var _ = Describe("deploymentStatus", func() {
 		d := newDeployment(1, 3, 3, 3, nil)
 		Expect(deploymentStatus(toUnstructured(d))).To(Equal(StatusInProgress))
 	})
+
+	It("does not panic when spec.replicas is nil (defaults desired to 1)", func() {
+		d := &apps.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Generation: 1},
+			Spec:       apps.DeploymentSpec{}, // Replicas left nil, as an admission webhook / old object might leave it
+			Status: apps.DeploymentStatus{
+				ObservedGeneration: 1,
+				Conditions:         []apps.DeploymentCondition{availableTrue},
+			},
+		}
+		Expect(func() { _, _ = deploymentStatus(toUnstructured(d)) }).NotTo(Panic())
+		Expect(deploymentStatus(toUnstructured(d))).To(Equal(StatusReady))
+	})
 })
 
 var _ = Describe("stsStatus", func() {
@@ -529,5 +542,90 @@ var _ = Describe("kagentStatus (Agent / ModelConfig)", func() {
 	})
 	It("is InProgress when not yet reconciled (no conditions)", func() {
 		Expect(statusOf("Agent")).To(Equal(StatusInProgress))
+	})
+})
+
+var _ = Describe("statusFromStandardConditions", func() {
+	// statusFromStandardConditions (via getConditionOfType) is what runs for every
+	// unhandled CRD kind through status()'s default case. Many CRD schemas mark
+	// "reason" (and sometimes "status") omitempty, so a condition entry can legally
+	// arrive with type/status only, or even without a "status" key at all.
+	newUnhandledKind := func(conds ...map[string]any) *unstructured.Unstructured {
+		status := map[string]any{}
+		if conds != nil {
+			cs := make([]any, 0, len(conds))
+			for _, c := range conds {
+				cs = append(cs, c)
+			}
+			status["conditions"] = cs
+		}
+		u := &unstructured.Unstructured{Object: map[string]any{"status": status}}
+		u.SetAPIVersion("example.com/v1")
+		u.SetKind("Widget")
+		return u
+	}
+
+	It("does not panic and computes Ready when the Ready condition has no reason field", func() {
+		condNoReason := map[string]any{"type": "Ready", "status": "True"}
+		u := newUnhandledKind(condNoReason)
+		Expect(func() { _, _ = status(u) }).NotTo(Panic())
+		Expect(status(u)).To(Equal(StatusReady))
+	})
+
+	It("does not panic when neither reason nor status is present on the condition", func() {
+		condBare := map[string]any{"type": "Ready"}
+		u := newUnhandledKind(condBare)
+		Expect(func() { _, _ = status(u) }).NotTo(Panic())
+	})
+
+	It("is InProgress when Ready=False and reason is absent", func() {
+		condNoReason := map[string]any{"type": "Ready", "status": "False"}
+		u := newUnhandledKind(condNoReason)
+		Expect(status(u)).To(Equal(StatusInProgress))
+	})
+})
+
+var _ = Describe("serviceStatus", func() {
+	newService := func(stype core.ServiceType, clusterIP string, ingress ...core.LoadBalancerIngress) *unstructured.Unstructured {
+		svc := &core.Service{
+			Spec: core.ServiceSpec{Type: stype, ClusterIP: clusterIP},
+			Status: core.ServiceStatus{
+				LoadBalancer: core.LoadBalancerStatus{Ingress: ingress},
+			},
+		}
+		m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(svc)
+		Expect(err).NotTo(HaveOccurred())
+		u := &unstructured.Unstructured{Object: m}
+		u.SetAPIVersion("v1")
+		u.SetKind("Service")
+		return u
+	}
+	statusOf := func(u *unstructured.Unstructured) string {
+		res, err := serviceStatus(u)
+		Expect(err).NotTo(HaveOccurred())
+		return res
+	}
+
+	It("is Ready for a ClusterIP service", func() {
+		Expect(statusOf(newService(core.ServiceTypeClusterIP, "10.0.0.1"))).To(Equal(StatusReady))
+	})
+
+	It("is Ready for a LoadBalancer with hostname-only ingress (AWS ELB/NLB never set IP)", func() {
+		u := newService(core.ServiceTypeLoadBalancer, "10.0.0.2", core.LoadBalancerIngress{Hostname: "lb.us-east-1.elb.amazonaws.com"})
+		Expect(statusOf(u)).To(Equal(StatusReady))
+	})
+
+	It("is Ready for a LoadBalancer with IP-only ingress", func() {
+		u := newService(core.ServiceTypeLoadBalancer, "10.0.0.3", core.LoadBalancerIngress{IP: "1.2.3.4"})
+		Expect(statusOf(u)).To(Equal(StatusReady))
+	})
+
+	It("is InProgress for a LoadBalancer with an ingress entry that has neither IP nor hostname", func() {
+		u := newService(core.ServiceTypeLoadBalancer, "10.0.0.4", core.LoadBalancerIngress{})
+		Expect(statusOf(u)).To(Equal(StatusInProgress))
+	})
+
+	It("is InProgress for a LoadBalancer with no ingress entries yet", func() {
+		Expect(statusOf(newService(core.ServiceTypeLoadBalancer, "10.0.0.5"))).To(Equal(StatusInProgress))
 	})
 })

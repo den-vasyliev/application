@@ -19,7 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -177,72 +176,31 @@ var _ = Describe("Application Reconciler", func() {
 			Expect(componentKinds(ns1List)).To(ConsistOf("Deployment", "Service"))
 
 		})
-	})
 
-	Describe("setOwnerRefForResources", func() {
-		var resource = &unstructured.Unstructured{}
-		resource.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   "apps",
-			Version: "v1",
-			Kind:    "StatefulSet",
-		})
-		var key types.NamespacedName
-		var resources []*unstructured.Unstructured
-		var uid types.UID = "old-uid"
-		var newUID types.UID = "new-uid"
-		var ownerRef = metav1.OwnerReference{
-			APIVersion: "app.k8s.io/v1beta1",
-			Kind:       "Application",
-			Name:       "application-foo",
-			UID:        uid,
-		}
+		It("should honor matchExpressions-only selectors instead of matching everything in the namespace", func() {
+			// Regression: client.MatchingLabels(selector.MatchLabels) silently ignores
+			// matchExpressions, so a selector expressed purely via matchExpressions produced
+			// an empty MatchLabels and listed EVERY resource of that GVK in the namespace.
+			ns := "match-expressions-only"
+			createNamespace(ns, ctx)
 
-		It("should append new ownerReference to the resources", func() {
-			key = types.NamespacedName{
-				Name:      statefulSet.Name,
-				Namespace: metav1.NamespaceDefault,
+			matched := createDeployment(map[string]string{"tier": "backend"}, ns)
+			unmatched := createDeployment(map[string]string{"tier": "frontend"}, ns)
+			Expect(c.Create(ctx, matched)).NotTo(HaveOccurred())
+			Expect(c.Create(ctx, unmatched)).NotTo(HaveOccurred())
+
+			selector := &metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{Key: "tier", Operator: metav1.LabelSelectorOpIn, Values: []string{"backend"}},
+				},
 			}
-			resources = append(resources, resource)
+			groupKinds := []metav1.GroupKind{{Group: "apps", Kind: "Deployment"}}
 
-			err := c.Get(ctx, key, resource)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resource.GetOwnerReferences()).To(BeEmpty())
-
-			err = applicationReconciler.setOwnerRefForResources(ctx, ownerRef, resources)
-			Expect(err).NotTo(HaveOccurred())
-			err = c.Get(ctx, key, resource)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resource.GetOwnerReferences()).To(HaveLen(1))
-			Expect(resource.GetOwnerReferences()).To(ContainElement(ownerRef))
-		})
-
-		It("should update existing ownerReference with new UID", func() {
-			err := c.Get(ctx, key, resource)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resource.GetOwnerReferences()).To(HaveLen(1))
-			Expect(resource.GetOwnerReferences()[0].UID).To(Equal(uid))
-
-			ownerRef.UID = newUID
-			err = applicationReconciler.setOwnerRefForResources(ctx, ownerRef, resources)
-			Expect(err).NotTo(HaveOccurred())
-			err = c.Get(ctx, key, resource)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resource.GetOwnerReferences()).To(HaveLen(1))
-			Expect(resource.GetOwnerReferences()[0].UID).To(Equal(newUID))
-		})
-
-		It("should NOT update identical ownerReference", func() {
-			err := c.Get(ctx, key, resource)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resource.GetOwnerReferences()).To(HaveLen(1))
-			Expect(resource.GetOwnerReferences()[0].UID).To(Equal(newUID))
-
-			err = applicationReconciler.setOwnerRefForResources(ctx, ownerRef, resources)
-			Expect(err).NotTo(HaveOccurred())
-			err = c.Get(ctx, key, resource)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resource.GetOwnerReferences()).To(HaveLen(1))
-			Expect(resource.GetOwnerReferences()[0].UID).To(Equal(newUID))
+			var errs []error
+			list := applicationReconciler.fetchComponentListResources(ctx, groupKinds, selector, ns, &errs)
+			Expect(errs).To(BeNil())
+			Expect(list).To(HaveLen(1))
+			Expect(list[0].GetName()).To(Equal(matched.Name))
 		})
 	})
 
@@ -271,8 +229,14 @@ var _ = Describe("Application Reconciler", func() {
 			// Owner-ref mutation is disabled: the controller is a read-only aggregator
 			// (see commit d3d8790). It must populate the Application's ComponentList from
 			// the label selector but never write ownerReferences onto the matched objects.
-			deployment = createDeployment(labelSet1, namespace1)
-			service = createService(labelSet1, namespace1)
+			//
+			// Uses a unique label value (not the shared labelSet1) so this spec's component
+			// count can't be inflated by same-labeled objects other specs created earlier in
+			// namespace1 and never cleaned up (BeforeEach/AfterEach only manage the manager,
+			// not envtest object state, which persists for the whole suite).
+			ownerRefLabels := map[string]string{"foo": "bar-" + uuid.New().String()}
+			deployment = createDeployment(ownerRefLabels, namespace1)
+			service = createService(ownerRefLabels, namespace1)
 			Expect(c.Create(ctx, deployment)).NotTo(HaveOccurred())
 			Expect(c.Create(ctx, service)).NotTo(HaveOccurred())
 
@@ -280,10 +244,10 @@ var _ = Describe("Application Reconciler", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "application-01",
 					Namespace: metav1.NamespaceDefault,
-					Labels:    labelSet1,
+					Labels:    ownerRefLabels,
 				},
 				Spec: appv1beta1.ApplicationSpec{
-					Selector: &metav1.LabelSelector{MatchLabels: labelSet1},
+					Selector: &metav1.LabelSelector{MatchLabels: ownerRefLabels},
 					ComponentGroupKinds: []metav1.GroupKind{
 						{Group: "apps", Kind: "Deployment"},
 						{Group: "v1", Kind: "Service"},
@@ -302,6 +266,17 @@ var _ = Describe("Application Reconciler", func() {
 				fetchUpdatedService(ctx, service)
 				return len(deployment.OwnerReferences) == 0 && len(service.OwnerReferences) == 0
 			}, 5*time.Second, time.Second).Should(BeTrue(), "controller must not set ownerReferences")
+		})
+
+		It("should not error when the Application is deleted before its status write lands", func() {
+			// Simulates the race where an Application is deleted between Reconcile's
+			// initial Get and updateApplicationStatus's write (common on churny
+			// namespaces with short-lived preview environments) — this must be a no-op,
+			// not a surfaced Reconciler error.
+			nn := types.NamespacedName{Name: "does-not-exist", Namespace: namespace1}
+			Eventually(func() error {
+				return applicationReconciler.updateApplicationStatus(ctx, nn, &appv1beta1.ApplicationStatus{})
+			}, timeout).Should(Succeed())
 		})
 	})
 

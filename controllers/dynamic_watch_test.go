@@ -44,7 +44,6 @@ var _ = Describe("dynamic component watch", func() {
 		r := &ApplicationReconciler{
 			Client: mgr.GetClient(),
 			Mapper: mgr.GetRESTMapper(),
-			Scheme: mgr.GetScheme(),
 		}
 		// Use the REAL SetupWithManager so the dynamic-watch wiring is active.
 		Expect(r.SetupWithManager(mgr)).NotTo(HaveOccurred())

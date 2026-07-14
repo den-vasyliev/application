@@ -18,7 +18,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -39,8 +38,11 @@ import (
 type ApplicationReconciler struct {
 	client.Client
 	Mapper              meta.RESTMapper
-	Scheme              *runtime.Scheme
 	StabilizationPeriod time.Duration
+	// ConcurrentReconciles caps how many Applications can reconcile in parallel.
+	// Reconciles of different Applications are independent, so this is safe to raise.
+	// <= 0 defaults to 4 in SetupWithManager.
+	ConcurrentReconciles int
 
 	// controller is the handle returned by builder.Build, used to register watches on
 	// component kinds dynamically at runtime (see ensureComponentWatches).
@@ -57,7 +59,7 @@ type ApplicationReconciler struct {
 
 // +kubebuilder:rbac:groups=app.k8s.io,resources=applications,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=app.k8s.io,resources=applications/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=*,resources=*,verbs=list;get;update;patch;watch
+// +kubebuilder:rbac:groups=*,resources=*,verbs=get;list;watch
 
 func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("application", req.NamespacedName)
@@ -170,6 +172,17 @@ func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context,
 		return resources
 	}
 
+	// Convert once, using full label-selector semantics (matchLabels AND matchExpressions).
+	// client.MatchingLabels only ever sends selector.MatchLabels — an Application whose
+	// selector is expressed purely via matchExpressions would produce an empty
+	// MatchLabels and silently list every resource of that GVK in the namespace.
+	// applicationsForComponent already relies on this same full-selector conversion.
+	sel, err := metav1.LabelSelectorAsSelector(selector)
+	if err != nil {
+		*errs = append(*errs, err)
+		return nil
+	}
+
 	for _, gk := range groupKinds {
 		mapping, err := r.Mapper.RESTMapping(schema.GroupKind{
 			Group: appv1beta1.StripVersion(gk.Group),
@@ -184,7 +197,7 @@ func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context,
 
 		list := &unstructured.UnstructuredList{}
 		list.SetGroupVersionKind(mapping.GroupVersionKind)
-		if err = r.Client.List(ctx, list, client.InNamespace(namespace), client.MatchingLabels(selector.MatchLabels)); err != nil {
+		if err = r.Client.List(ctx, list, client.InNamespace(namespace), client.MatchingLabelsSelector{Selector: sel}); err != nil {
 			logger.Error(err, "unable to list resources for GVK", "gvk", mapping.GroupVersionKind)
 			*errs = append(*errs, err)
 			continue
@@ -198,45 +211,17 @@ func (r *ApplicationReconciler) fetchComponentListResources(ctx context.Context,
 	return resources
 }
 
-func (r *ApplicationReconciler) setOwnerRefForResources(ctx context.Context, ownerRef metav1.OwnerReference, resources []*unstructured.Unstructured) error {
-	logger := log.FromContext(ctx)
-	for _, resource := range resources {
-		ownerRefs := resource.GetOwnerReferences()
-		ownerRefFound := false
-		for i, refs := range ownerRefs {
-			if ownerRef.Kind == refs.Kind &&
-				ownerRef.APIVersion == refs.APIVersion &&
-				ownerRef.Name == refs.Name {
-				ownerRefFound = true
-				if ownerRef.UID != refs.UID {
-					ownerRefs[i] = ownerRef
-				}
-			}
-		}
-
-		if !ownerRefFound {
-			ownerRefs = append(ownerRefs, ownerRef)
-		}
-		resource.SetOwnerReferences(ownerRefs)
-		err := r.Client.Update(ctx, resource)
-		if err != nil {
-			// We log this error, but we continue and try to set the ownerRefs on the other resources.
-			logger.Error(err, "ErrorSettingOwnerRef", "gvk", resource.GroupVersionKind().String(),
-				"namespace", resource.GetNamespace(), "name", resource.GetName())
-		}
-	}
-	return nil
-}
-
 func (r *ApplicationReconciler) objectStatuses(ctx context.Context, resources []*unstructured.Unstructured, errs *[]error) []appv1beta1.ObjectStatus {
 	logger := log.FromContext(ctx)
 	var objectStatuses []appv1beta1.ObjectStatus
 	for _, resource := range resources {
+		// Link (selfLink) is intentionally left unset: selfLink was removed from the
+		// Kubernetes API in 1.24 and GetSelfLink() is always empty on any live object.
+		// The field stays in the API type for compatibility with existing consumers.
 		os := appv1beta1.ObjectStatus{
 			Group: resource.GroupVersionKind().Group,
 			Kind:  resource.GetKind(),
 			Name:  resource.GetName(),
-			Link:  resource.GetSelfLink(),
 		}
 		s, err := status(resource)
 		if err != nil {
@@ -334,6 +319,12 @@ func (r *ApplicationReconciler) updateApplicationStatus(ctx context.Context, nn 
 		}
 		return nil
 	}); err != nil {
+		// The Application can be deleted between Reconcile's initial Get and this
+		// write (common on churny namespaces with short-lived preview environments) —
+		// nothing to update, so treat it like the initial Get's not-found check.
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("failed to update status of Application %s/%s: %v", nn.Namespace, nn.Name, err)
 	}
 	return nil
@@ -353,8 +344,16 @@ func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// --zap-log-level=debug; it only appears at --zap-log-level=2. Our own
 	// "registered dynamic component watch" line (via r.log) carries the GVK and stays at INFO.
 	baseLog := mgr.GetLogger().WithName("application")
+	// Reconciles of different Applications are independent (each reads its own component
+	// list and writes its own status), so running several in parallel is safe and keeps
+	// one slow/large Application's reconcile from head-of-line-blocking the rest.
+	concurrency := r.ConcurrentReconciles
+	if concurrency <= 0 {
+		concurrency = 4
+	}
 	c, err := ctrl.NewControllerManagedBy(mgr).
 		For(&appv1beta1.Application{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: concurrency}).
 		WithLogConstructor(func(req *reconcile.Request) logr.Logger {
 			l := baseLog.V(2)
 			if req != nil {

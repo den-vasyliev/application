@@ -19,7 +19,6 @@ const (
 	StatusReady      = "Ready"
 	StatusInProgress = "InProgress"
 	StatusUnknown    = "Unknown"
-	StatusDisabled   = "Disabled"
 )
 
 func status(u *unstructured.Unstructured) (string, error) {
@@ -67,7 +66,7 @@ func statusFromStandardConditions(u *unstructured.Unstructured) (string, error) 
 	condition := StatusReady
 
 	// Check Ready condition
-	_, cs, found, err := getConditionOfType(u, StatusReady)
+	cs, found, err := getConditionOfType(u, StatusReady)
 	if err != nil {
 		return StatusUnknown, err
 	}
@@ -76,7 +75,7 @@ func statusFromStandardConditions(u *unstructured.Unstructured) (string, error) 
 	}
 
 	// Check InProgress condition
-	_, cs, found, err = getConditionOfType(u, StatusInProgress)
+	cs, found, err = getConditionOfType(u, StatusInProgress)
 	if err != nil {
 		return StatusUnknown, err
 	}
@@ -139,7 +138,11 @@ func deploymentStatus(u *unstructured.Unstructured) (string, error) {
 		}
 	}
 
-	scaledToZero := *deployment.Spec.Replicas == 0 && deployment.Status.Replicas == 0
+	desired := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desired = *deployment.Spec.Replicas
+	}
+	scaledToZero := desired == 0 && deployment.Status.Replicas == 0
 
 	// Ready when Kubernetes reports the Deployment Available (>= minAvailable replicas
 	// serving) and there's no ReplicaFailure. We deliberately do NOT require
@@ -241,10 +244,22 @@ func serviceStatus(u *unstructured.Unstructured) (string, error) {
 	}
 	stype := service.Spec.Type
 
-	if stype == corev1.ServiceTypeClusterIP || stype == corev1.ServiceTypeNodePort || stype == corev1.ServiceTypeExternalName ||
-		stype == corev1.ServiceTypeLoadBalancer && !isEmpty(service.Spec.ClusterIP) &&
-			len(service.Status.LoadBalancer.Ingress) > 0 && !hasEmptyIngressIP(service.Status.LoadBalancer.Ingress) {
+	// ClusterIP/NodePort/ExternalName have no external provisioning step — Ready as soon
+	// as the object exists.
+	if stype == corev1.ServiceTypeClusterIP || stype == corev1.ServiceTypeNodePort || stype == corev1.ServiceTypeExternalName {
 		return StatusReady, nil
+	}
+
+	// LoadBalancer additionally requires the cloud provider to have provisioned the LB:
+	// a ClusterIP assigned AND at least one ingress entry, all of them provisioned. An
+	// ingress entry is provisioned when it carries either an IP (GCP/Azure/most CNI LBs)
+	// or a Hostname (AWS ELB/NLB, which never populate IP) — requiring IP unconditionally
+	// left hostname-only LoadBalancer Services stuck InProgress forever.
+	if stype == corev1.ServiceTypeLoadBalancer {
+		ingress := service.Status.LoadBalancer.Ingress
+		if !isEmpty(service.Spec.ClusterIP) && len(ingress) > 0 && allIngressProvisioned(ingress) {
+			return StatusReady, nil
+		}
 	}
 	return StatusInProgress, nil
 }
@@ -555,27 +570,34 @@ func conditionHasStatus(conds []any, name, status string) bool {
 	return false
 }
 
-func hasEmptyIngressIP(ingress []corev1.LoadBalancerIngress) bool {
+// allIngressProvisioned reports whether every LoadBalancer ingress entry carries an IP
+// or a Hostname. AWS ELB/NLB only ever set Hostname, never IP.
+func allIngressProvisioned(ingress []corev1.LoadBalancerIngress) bool {
 	for _, i := range ingress {
-		if isEmpty(i.IP) {
-			return true
+		if isEmpty(i.IP) && isEmpty(i.Hostname) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func isEmpty(s string) bool {
 	return len(strings.TrimSpace(s)) == 0
 }
 
-func getConditionOfType(u *unstructured.Unstructured, conditionType string) (string, corev1.ConditionStatus, bool, error) {
+// getConditionOfType returns the status of the named condition. It uses comma-ok type
+// assertions throughout: many CRD schemas mark "reason" (and even "status") omitempty,
+// and this function runs for every unhandled kind via status()'s default case — an
+// unchecked assertion here would panic and crash-loop the controller on a perfectly
+// valid but sparse condition entry.
+func getConditionOfType(u *unstructured.Unstructured, conditionType string) (corev1.ConditionStatus, bool, error) {
 	conditions, found, err := unstructured.NestedSlice(u.Object, "status", "conditions")
 	if err != nil || !found {
-		return "", corev1.ConditionFalse, false, err
+		return corev1.ConditionFalse, false, err
 	}
 
 	for _, c := range conditions {
-		condition, ok := c.(map[string]interface{})
+		condition, ok := c.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -588,10 +610,9 @@ func getConditionOfType(u *unstructured.Unstructured, conditionType string) (str
 			continue
 		}
 		if condType == conditionType {
-			reason := condition["reason"].(string)
-			conditionStatus := condition["status"].(string)
-			return reason, corev1.ConditionStatus(conditionStatus), true, nil
+			conditionStatus, _ := condition["status"].(string)
+			return corev1.ConditionStatus(conditionStatus), true, nil
 		}
 	}
-	return "", corev1.ConditionFalse, false, nil
+	return corev1.ConditionFalse, false, nil
 }

@@ -74,7 +74,6 @@ var _ = BeforeSuite(func() {
 	err = (&controllers.ApplicationReconciler{
 		Client: mgr.GetClient(),
 		Mapper: mgr.GetRESTMapper(),
-		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
