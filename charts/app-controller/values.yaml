@@ -74,8 +74,9 @@ push:
 logMetrics:
   enabled: false
   # Name of the Service fronting the Fluent Bit DaemonSet's prometheus_exporter pods.
-  # Looked up in the release namespace via its Endpoints. Empty = the Service this
-  # chart's own fluentbit.* templates create (<fullname>-fluentbit).
+  # Looked up in the release namespace via its Endpoints. Empty = "triage-fluentbit",
+  # the fixed-name Service this chart's own fluentbit.* templates create (fixed, not
+  # release-prefixed, so this default holds for any release name).
   serviceName: ""
   # Fluent Bit prometheus_exporter port on each pod.
   port: 2021

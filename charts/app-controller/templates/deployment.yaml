@@ -64,7 +64,7 @@ spec:
             {{- if .Values.logMetrics.enabled }}
             - --log-metrics-enabled
             - --log-metrics-service-namespace={{ .Release.Namespace }}
-            - --log-metrics-service-name={{ .Values.logMetrics.serviceName | default (printf "%s-fluentbit" (include "app-controller.fullname" .)) }}
+            - --log-metrics-service-name={{ .Values.logMetrics.serviceName | default "triage-fluentbit" }}
             - --log-metrics-port={{ .Values.logMetrics.port }}
             - --log-metrics-interval-seconds={{ .Values.logMetrics.intervalSeconds }}
             - --log-metrics-error-threshold={{ .Values.logMetrics.errorThreshold }}
