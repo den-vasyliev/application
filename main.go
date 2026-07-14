@@ -15,6 +15,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	appv1beta1 "sigs.k8s.io/application/api/v1beta1"
 	"sigs.k8s.io/application/controllers"
+	"sigs.k8s.io/application/logmetrics"
 	"sigs.k8s.io/application/push"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -51,6 +52,13 @@ func main() {
 	var pushEndpoint, clusterName, pushTenant, pushToken, pushTokenFile, pushNamespaces string
 	var pushHeartbeat int64
 	var pushInsecure, pushAllowPlaintext bool
+	var logMetricsEnabled bool
+	var logMetricsServiceNamespace, logMetricsServiceName string
+	var logMetricsPort int
+	var logMetricsIntervalSeconds int64
+	var logMetricsErrorThreshold int64
+	var logMetricsErrorMetric, logMetricsWarnMetric, logMetricsTotalMetric string
+	var logMetricsNamespaceLabel, logMetricsServiceLabel, logMetricsServiceLabelFallback string
 	flag.StringVar(&namespace, "namespace", "", "Namespace within which CRD controller is running.")
 	flag.StringVar(&metricsAddr, "metrics-addr", "127.0.0.1:8080", "The address the metric endpoint binds to. Defaults to loopback; expose via an authenticating proxy (e.g. kube-rbac-proxy) rather than binding to all interfaces.")
 	flag.Int64Var(&syncPeriod, "sync-period", 120, "Sync every sync-period seconds.")
@@ -71,6 +79,23 @@ func main() {
 	flag.Int64Var(&pushHeartbeat, "push-heartbeat", 20, "Heartbeat interval in seconds.")
 	flag.BoolVar(&pushInsecure, "push-insecure-skip-verify", false, "Skip TLS certificate verification for a wss:// endpoint (dev only).")
 	flag.BoolVar(&pushAllowPlaintext, "push-allow-plaintext", false, "Allow a plaintext ws:// endpoint (sends the bearer token unencrypted; dev/trusted-network only).")
+
+	// Log-based metrics (ADR-0006): scrape Fluent Bit's log_to_metrics exporter and
+	// forward error/warn/total counters to triage as log_metrics frames over the same
+	// push connection. Off unless --log-metrics-enabled is set; a no-op if push mode
+	// itself is disabled (nothing to send the frame through).
+	flag.BoolVar(&logMetricsEnabled, "log-metrics-enabled", false, "Enable the log-based metrics collector (scrapes Fluent Bit, sends log_metrics frames via push mode).")
+	flag.StringVar(&logMetricsServiceNamespace, "log-metrics-service-namespace", "", "Namespace of the Service fronting the Fluent Bit DaemonSet. Required when --log-metrics-enabled is set.")
+	flag.StringVar(&logMetricsServiceName, "log-metrics-service-name", "triage-fluentbit", "Name of the Service fronting the Fluent Bit DaemonSet.")
+	flag.IntVar(&logMetricsPort, "log-metrics-port", 2021, "Fluent Bit prometheus_exporter port on each pod.")
+	flag.Int64Var(&logMetricsIntervalSeconds, "log-metrics-interval-seconds", 60, "Scrape + gate-evaluation interval in seconds.")
+	flag.Int64Var(&logMetricsErrorThreshold, "log-metrics-error-threshold", 10, "Minimum error-count delta in one interval for a service to be reported.")
+	flag.StringVar(&logMetricsErrorMetric, "log-metrics-error-metric", "log_metric_counter_log_errors_total", "Prometheus counter family name for error log lines, as emitted by Fluent Bit.")
+	flag.StringVar(&logMetricsWarnMetric, "log-metrics-warn-metric", "log_metric_counter_log_warns_total", "Prometheus counter family name for warn log lines. Empty disables warn reporting.")
+	flag.StringVar(&logMetricsTotalMetric, "log-metrics-total-metric", "log_metric_counter_log_lines_total", "Prometheus counter family name for all log lines. Empty disables total reporting.")
+	flag.StringVar(&logMetricsNamespaceLabel, "log-metrics-namespace-label", "namespace", "Prometheus label key identifying the source namespace on each sample.")
+	flag.StringVar(&logMetricsServiceLabel, "log-metrics-service-label", "service", "Prometheus label key identifying the source service on each sample.")
+	flag.StringVar(&logMetricsServiceLabelFallback, "log-metrics-service-label-fallback", "service_fallback", "Second label key consulted when --log-metrics-service-label is absent on a sample. Empty disables the fallback lookup.")
 
 	// Bind the zap logging flags (--zap-log-level, --zap-devel, --zap-encoder, ...) so log
 	// verbosity is controllable at runtime.
@@ -132,6 +157,7 @@ func main() {
 	// +kubebuilder:scaffold:builder
 
 	// Push mode: stream Applications + Warning events to a triage agent (ADR-0005).
+	var pusher *push.Pusher
 	if pushEndpoint != "" {
 		if err := push.ValidateEndpoint(pushEndpoint, pushAllowPlaintext); err != nil {
 			setupLog.Error(err, "invalid --push-endpoint")
@@ -153,7 +179,7 @@ func main() {
 		if len(nsList) == 0 && namespace != "" {
 			nsList = []string{namespace}
 		}
-		pusher := push.New(push.Options{
+		pusher = push.New(push.Options{
 			Endpoint:     pushEndpoint,
 			ClusterName:  clusterName,
 			Tenant:       pushTenant,
@@ -163,12 +189,53 @@ func main() {
 			AgentVersion: appVersion(),
 			Heartbeat:    time.Duration(pushHeartbeat) * time.Second,
 			InsecureTLS:  pushInsecure,
+			LogMetrics:   logMetricsEnabled,
 		}, mgr, ctrl.Log)
 		if err := mgr.Add(pusher); err != nil {
 			setupLog.Error(err, "unable to add push runnable")
 			os.Exit(1)
 		}
 		setupLog.Info("push mode enabled", "endpoint", pushEndpoint, "cluster", clusterName, "namespaces", nsList)
+	}
+
+	// Log-based metrics (ADR-0006): scrape Fluent Bit + forward via the pusher above.
+	// logmetrics.New is a no-op (returns nil) when either disabled or push mode itself
+	// is off. Pass an explicit untyped nil (not the *push.Pusher variable, even though
+	// it may itself be nil) when push mode is disabled — a nil *push.Pusher stored in
+	// the Sender interface would NOT compare equal to nil inside New (Go's typed-nil-
+	// interface trap), so the collector would start and scrape pointlessly.
+	if logMetricsEnabled {
+		if logMetricsServiceNamespace == "" {
+			setupLog.Error(nil, "--log-metrics-service-namespace is required when --log-metrics-enabled is set")
+			os.Exit(1)
+		}
+		var sender logmetrics.Sender
+		if pusher != nil {
+			sender = pusher
+		}
+		collector := logmetrics.New(logmetrics.Options{
+			ServiceNamespace:     logMetricsServiceNamespace,
+			ServiceName:          logMetricsServiceName,
+			Port:                 logMetricsPort,
+			Interval:             time.Duration(logMetricsIntervalSeconds) * time.Second,
+			ErrorThreshold:       logMetricsErrorThreshold,
+			ErrorMetric:          logMetricsErrorMetric,
+			WarnMetric:           logMetricsWarnMetric,
+			TotalMetric:          logMetricsTotalMetric,
+			NamespaceLabel:       logMetricsNamespaceLabel,
+			ServiceLabel:         logMetricsServiceLabel,
+			ServiceLabelFallback: logMetricsServiceLabelFallback,
+		}, mgr, sender, ctrl.Log)
+		if collector == nil {
+			setupLog.Info("log-metrics collector not started: push mode is disabled, so there is nowhere to send frames")
+		} else if err := mgr.Add(collector); err != nil {
+			setupLog.Error(err, "unable to add log-metrics collector runnable")
+			os.Exit(1)
+		} else {
+			setupLog.Info("log-metrics collector enabled",
+				"service", logMetricsServiceNamespace+"/"+logMetricsServiceName, "port", logMetricsPort,
+				"interval", logMetricsIntervalSeconds, "errorThreshold", logMetricsErrorThreshold)
+		}
 	}
 
 	setupLog.Info("starting app-controller")
