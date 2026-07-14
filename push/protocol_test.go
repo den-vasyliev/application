@@ -1,6 +1,8 @@
 package push
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,6 +26,9 @@ func TestFrameRoundTrip(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "evt", Namespace: "ops"},
 			Reason:     "BackOff",
 			Type:       corev1.EventTypeWarning,
+		}),
+		newLogMetrics("owl", 1720000000, 60, []ServiceLogMetrics{
+			{Namespace: "ops", Service: "api", ErrorCount: 42, WarnCount: 7, TotalCount: 1000, Sample: "panic: nil pointer"},
 		}),
 		newHeartbeat("owl"),
 	}
@@ -73,5 +78,104 @@ func TestSnapshotPreservesStatus(t *testing.T) {
 	}
 	if len(ra.Status.Objects) != 1 || ra.Status.Objects[0].Kind != "Deployment" {
 		t.Errorf("component objects not preserved: %+v", ra.Status.Objects)
+	}
+}
+
+// TestLogMetricsFrame guards the log_metrics wire contract: field names/values
+// (windowStart, windowSec, services[].{namespace,service,errorCount,warnCount,
+// totalCount,sample}) must survive marshal→unmarshal exactly, and the JSON keys must
+// match the receiver's LogMetricsPayload (internal/remoteagent/protocol.go).
+func TestLogMetricsFrame(t *testing.T) {
+	f := newLogMetrics("owl", 1720000000, 60, []ServiceLogMetrics{
+		{Namespace: "ops", Service: "api", ErrorCount: 42, WarnCount: 7, TotalCount: 1000, Sample: "panic: nil pointer"},
+		{Namespace: "ops", Service: "web", ErrorCount: 11},
+	})
+	data, err := encode(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Exact JSON field names, since these are the wire contract with a separate repo.
+	raw := string(data)
+	for _, want := range []string{
+		`"kind":"log_metrics"`,
+		`"windowStart":1720000000`,
+		`"windowSec":60`,
+		`"namespace":"ops"`,
+		`"service":"api"`,
+		`"errorCount":42`,
+		`"warnCount":7`,
+		`"totalCount":1000`,
+		`"sample":"panic: nil pointer"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("encoded frame missing %q; got %s", want, raw)
+		}
+	}
+	// warnCount/totalCount are omitempty — the second service (zero warn/total) must
+	// not carry them, so the receiver's zero-value defaults apply, not an explicit 0
+	// that would look identical on decode but wastes wire bytes at scale.
+	if strings.Contains(raw, `"service":"web","errorCount":11,"warnCount"`) {
+		t.Errorf("omitempty fields present on zero-value service: %s", raw)
+	}
+
+	got, err := decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LogMetrics == nil {
+		t.Fatal("LogMetrics payload missing after round-trip")
+	}
+	if got.LogMetrics.WindowStart != 1720000000 || got.LogMetrics.WindowSec != 60 {
+		t.Errorf("window = (%d, %d), want (1720000000, 60)", got.LogMetrics.WindowStart, got.LogMetrics.WindowSec)
+	}
+	if len(got.LogMetrics.Services) != 2 {
+		t.Fatalf("services = %d, want 2", len(got.LogMetrics.Services))
+	}
+	s0 := got.LogMetrics.Services[0]
+	if s0.Namespace != "ops" || s0.Service != "api" || s0.ErrorCount != 42 || s0.WarnCount != 7 || s0.TotalCount != 1000 || s0.Sample != "panic: nil pointer" {
+		t.Errorf("service[0] round-trip mismatch: %+v", s0)
+	}
+}
+
+func TestTruncateSample(t *testing.T) {
+	short := "short sample"
+	if got := TruncateSample(short); got != short {
+		t.Errorf("TruncateSample(%q) = %q, want unchanged", short, got)
+	}
+	long := strings.Repeat("x", 300)
+	got := TruncateSample(long)
+	if len(got) != MaxLogMetricsSampleLen {
+		t.Errorf("TruncateSample length = %d, want %d", len(got), MaxLogMetricsSampleLen)
+	}
+}
+
+func TestChunkServices(t *testing.T) {
+	if chunkServices(nil) != nil {
+		t.Errorf("chunkServices(nil) should be nil")
+	}
+	services := make([]ServiceLogMetrics, 250)
+	for i := range services {
+		services[i] = ServiceLogMetrics{Namespace: "ops", Service: fmt.Sprintf("svc-%d", i)}
+	}
+	chunks := chunkServices(services)
+	if len(chunks) != 3 {
+		t.Fatalf("chunks = %d, want 3 (100+100+50)", len(chunks))
+	}
+	if len(chunks[0]) != MaxLogMetricsServices || len(chunks[1]) != MaxLogMetricsServices || len(chunks[2]) != 50 {
+		t.Errorf("chunk sizes = %d, %d, %d, want 100, 100, 50", len(chunks[0]), len(chunks[1]), len(chunks[2]))
+	}
+	// every service must appear exactly once across chunks
+	seen := make(map[string]bool)
+	for _, c := range chunks {
+		for _, s := range c {
+			if seen[s.Service] {
+				t.Errorf("service %q appears in more than one chunk", s.Service)
+			}
+			seen[s.Service] = true
+		}
+	}
+	if len(seen) != 250 {
+		t.Errorf("total unique services across chunks = %d, want 250", len(seen))
 	}
 }

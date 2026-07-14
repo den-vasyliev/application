@@ -78,6 +78,11 @@ type Options struct {
 	Heartbeat     time.Duration // heartbeat interval (default 20s)
 	InsecureTLS   bool          // skip TLS verify (dev only)
 	SnapshotChunk int           // apps per snapshot frame (default 50)
+	// LogMetrics, when true, advertises the "log_metrics" hello capability. Set this
+	// when a logmetrics.Collector is wired to send frames through this Pusher — it is
+	// metadata only (the receiver does not gate on it), so it stays false rather than
+	// implicitly true, to avoid claiming a feature that isn't actually active.
+	LogMetrics bool
 	// now returns the current time; injectable in tests. Defaults to time.Now.
 	now func() time.Time
 }
@@ -268,8 +273,12 @@ func (p *Pusher) runOnce(ctx context.Context) (connected bool, err error) {
 	// resolved key over (tenant,cluster,ts) — the same ts sent in the auth header above —
 	// so the receiver can verify + route. Hello-frame verification remains the
 	// authoritative auth check; the header is only a pre-upgrade hint.
+	var extraCaps []string
+	if p.opts.LogMetrics {
+		extraCaps = append(extraCaps, "log_metrics")
+	}
 	hello := newHello(p.opts.ClusterName, p.opts.Tenant, p.opts.AgentVersion,
-		[]byte(token), ts, p.opts.Namespaces)
+		[]byte(token), ts, p.opts.Namespaces, extraCaps...)
 	if err := p.writeFrame(conn, hello); err != nil {
 		cancel()
 		wg.Wait()
@@ -459,6 +468,29 @@ func (p *Pusher) onEvent(obj any) {
 		"namespace", e.Namespace, "reason", e.Reason,
 		"kind", e.InvolvedObject.Kind, "object", e.InvolvedObject.Name)
 	p.enqueue(newK8sEvent(p.opts.ClusterName, e))
+}
+
+// SendLogMetrics enqueues one log_metrics frame per chunk of at most
+// MaxLogMetricsServices services, for the logmetrics.Collector to call once per
+// scrape interval. It is a no-op — dropped with a debug log, nothing queued — when
+// push mode is disconnected (no active send channel) or services is empty, since the
+// underlying Fluent Bit counters are cumulative and nothing is lost long-term: the
+// next scrape's delta picks up where this one left off.
+func (p *Pusher) SendLogMetrics(windowStart int64, windowSec int, services []ServiceLogMetrics) {
+	if p == nil || len(services) == 0 {
+		return
+	}
+	p.mu.Lock()
+	connected := p.sendC != nil
+	p.mu.Unlock()
+	if !connected {
+		p.log.V(1).Info("push disconnected; dropping log_metrics frame (counters are cumulative, next scrape recovers)",
+			"services", len(services))
+		return
+	}
+	for _, chunk := range chunkServices(services) {
+		p.enqueue(newLogMetrics(p.opts.ClusterName, windowStart, windowSec, chunk))
+	}
 }
 
 func (p *Pusher) inScope(ns string) bool {

@@ -198,6 +198,82 @@ func TestPusher_DeltaEnqueued(t *testing.T) {
 	t.Fatalf("app_delta not received; frames = %v", hub.kinds())
 }
 
+// TestPusher_SendLogMetrics verifies SendLogMetrics enqueues a log_metrics frame that
+// reaches the hub with its payload intact, and that it is chunked at
+// MaxLogMetricsServices services per frame.
+func TestPusher_SendLogMetrics(t *testing.T) {
+	hub, srv := newFakeHub(t)
+	p := newTestPusher(wsURL(srv), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { _, _ = p.runOnce(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if slices.Contains(hub.kinds(), KindSnapshotEnd) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	services := make([]ServiceLogMetrics, 150) // > MaxLogMetricsServices, must split
+	for i := range services {
+		services[i] = ServiceLogMetrics{Namespace: "ops", Service: "svc", ErrorCount: int64(i)}
+	}
+	p.SendLogMetrics(1720000000, 60, services)
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		count := 0
+		hub.mu.Lock()
+		for _, f := range hub.frames {
+			if f.Kind == KindLogMetrics {
+				count++
+			}
+		}
+		hub.mu.Unlock()
+		if count == 2 {
+			cancel()
+			hub.mu.Lock()
+			defer hub.mu.Unlock()
+			var total int
+			for _, f := range hub.frames {
+				if f.Kind == KindLogMetrics {
+					if f.LogMetrics.WindowStart != 1720000000 || f.LogMetrics.WindowSec != 60 {
+						t.Errorf("window = (%d, %d), want (1720000000, 60)", f.LogMetrics.WindowStart, f.LogMetrics.WindowSec)
+					}
+					total += len(f.LogMetrics.Services)
+				}
+			}
+			if total != 150 {
+				t.Errorf("total services across log_metrics frames = %d, want 150", total)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	t.Fatalf("expected 2 log_metrics frames (150 services split at 100); frames = %v", hub.kinds())
+}
+
+// TestPusher_SendLogMetrics_DisconnectedIsNoop verifies that calling SendLogMetrics
+// before a connection is established (no send channel yet) does not panic and simply
+// drops — the counters are cumulative, so the next successful scrape recovers them.
+func TestPusher_SendLogMetrics_DisconnectedIsNoop(t *testing.T) {
+	p := newTestPusher("ws://unused.invalid", nil) // never connected: runOnce not called
+	p.SendLogMetrics(1720000000, 60, []ServiceLogMetrics{{Namespace: "ops", Service: "api", ErrorCount: 99}})
+	// No assertion beyond "did not panic" — sendC is nil, so this exercises the guard.
+}
+
+// TestPusher_SendLogMetrics_NilPusherIsNoop verifies a nil *Pusher (push mode
+// disabled entirely) tolerates SendLogMetrics — main.go wires the collector
+// unconditionally and relies on this rather than an extra nil check at the call site.
+func TestPusher_SendLogMetrics_NilPusherIsNoop(t *testing.T) {
+	var p *Pusher
+	p.SendLogMetrics(1720000000, 60, []ServiceLogMetrics{{Namespace: "ops", Service: "api", ErrorCount: 99}})
+}
+
 func TestValidateEndpoint(t *testing.T) {
 	tests := []struct {
 		endpoint       string
