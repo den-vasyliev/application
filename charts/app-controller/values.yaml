@@ -62,6 +62,85 @@ push:
   existingSecret: ""
   token: ""
 
+# Log-based metrics (ADR-0006): scrape a Fluent Bit DaemonSet's Prometheus exporter,
+# aggregate error/warn/total log-line counters per (namespace, service), and forward
+# services whose error delta crosses errorThreshold as log_metrics frames over the
+# push WebSocket above. Off by default. Requires push.enabled=true (there is nowhere
+# else to send the frames); the chart fails the render otherwise.
+#
+# fluentbit.* below deploys the DaemonSet that produces these metrics. It is
+# independent of this block so a fleet can run its own Fluent Bit and just point
+# logMetrics.serviceName/port at it instead.
+logMetrics:
+  enabled: false
+  # Name of the Service fronting the Fluent Bit DaemonSet's prometheus_exporter pods.
+  # Looked up in the release namespace via its Endpoints. Defaults to the Service
+  # this chart's own fluentbit.* templates create.
+  serviceName: "triage-fluentbit"
+  # Fluent Bit prometheus_exporter port on each pod.
+  port: 2021
+  # Scrape + gate-evaluation interval in seconds.
+  intervalSeconds: 60
+  # Minimum error-count delta in one interval for a service to be reported.
+  errorThreshold: 10
+  # Prometheus counter family names as emitted by Fluent Bit's log_to_metrics filter
+  # (metric_namespace "log_metric" + metric_mode "counter" produces the
+  # log_metric_counter_<metric_name> family name — see fluentbit.pipeline.* below,
+  # which must emit metric_name: log_errors_total / log_warns_total / log_lines_total
+  # to match these defaults). warnMetric/totalMetric empty disables that counter.
+  errorMetric: "log_metric_counter_log_errors_total"
+  warnMetric: "log_metric_counter_log_warns_total"
+  totalMetric: "log_metric_counter_log_lines_total"
+  # Prometheus label keys identifying the source namespace/service on each sample.
+  namespaceLabel: "namespace"
+  serviceLabel: "service"
+  # Second label consulted when serviceLabel is absent on a sample (see
+  # fluentbit.pipeline.serviceLabelFallback below). Empty disables the fallback.
+  serviceLabelFallback: "service_fallback"
+
+# Fluent Bit DaemonSet: tails container logs, counts error/warn lines per
+# (namespace, service) via the log_to_metrics filter, and exposes them for
+# logMetrics.* above to scrape. Named "triage-fluentbit" (not "fluentbit") to avoid
+# any collision with GKE's built-in fluentbit-gke DaemonSet. Off by default —
+# independent toggle from logMetrics.enabled so a fleet can supply its own Fluent
+# Bit and only enable logMetrics.
+fluentbit:
+  enabled: false
+  image:
+    repository: fluent/fluent-bit
+    tag: "5.0.9"
+    pullPolicy: IfNotPresent
+  # Exporter port (must match logMetrics.port above if logMetrics reads this
+  # DaemonSet's Service).
+  port: 2021
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  # Namespaces the tail input's kubernetes filter enrichment should ignore (their log
+  # lines are still tailed — filtering happens in the kubernetes filter's exclusion —
+  # but no error/warn/total counters are produced for them).
+  excludeNamespaces:
+    - kube-system
+    - kube-node-lease
+    - kube-public
+  tolerations:
+    - operator: Exists
+  pipeline:
+    # Regex (Fluent Bit / Onigmo syntax) matched against the merged log record's
+    # `log` field to classify a line as an error or a warn. Defaults cover common
+    # structured and unstructured shapes.
+    errorRegex: 'level=(error|fatal)|"level":"(error|fatal)"|\bERROR\b|\bFATAL\b|panic:'
+    warnRegex: 'level=warn(ing)?|"level":"warn(ing)?"|\bWARN(ING)?\b'
+    # Pod label read as the service identity, with a fallback label if the primary is
+    # absent. Fluent Bit's kubernetes filter replaces "/" with "." in label keys, so
+    # "app.kubernetes.io/name" is looked up as "app.kubernetes.io.name" on the record.
+    serviceLabel: "app.kubernetes.io/name"
+    serviceLabelFallback: "app"
+
 serviceAccount:
   # Create a dedicated ServiceAccount + RBAC. When false, uses `name`.
   create: true

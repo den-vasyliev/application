@@ -1,3 +1,6 @@
+{{- if and .Values.logMetrics.enabled (not .Values.push.enabled) }}
+{{- fail "logMetrics.enabled requires push.enabled=true — log_metrics frames are sent over the push WebSocket; there is nowhere to send them otherwise" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -57,6 +60,30 @@ spec:
             {{- if .Values.push.allowPlaintext }}
             - --push-allow-plaintext
             {{- end }}
+            {{- end }}
+            {{- if .Values.logMetrics.enabled }}
+            - --log-metrics-enabled
+            - --log-metrics-service-namespace={{ .Release.Namespace }}
+            - --log-metrics-service-name={{ .Values.logMetrics.serviceName }}
+            - --log-metrics-port={{ .Values.logMetrics.port }}
+            - --log-metrics-interval-seconds={{ .Values.logMetrics.intervalSeconds }}
+            - --log-metrics-error-threshold={{ .Values.logMetrics.errorThreshold }}
+            {{- if .Values.logMetrics.errorMetric }}
+            - --log-metrics-error-metric={{ .Values.logMetrics.errorMetric }}
+            {{- end }}
+            {{- if .Values.logMetrics.warnMetric }}
+            - --log-metrics-warn-metric={{ .Values.logMetrics.warnMetric }}
+            {{- end }}
+            {{- if .Values.logMetrics.totalMetric }}
+            - --log-metrics-total-metric={{ .Values.logMetrics.totalMetric }}
+            {{- end }}
+            {{- if .Values.logMetrics.namespaceLabel }}
+            - --log-metrics-namespace-label={{ .Values.logMetrics.namespaceLabel }}
+            {{- end }}
+            {{- if .Values.logMetrics.serviceLabel }}
+            - --log-metrics-service-label={{ .Values.logMetrics.serviceLabel }}
+            {{- end }}
+            - --log-metrics-service-label-fallback={{ .Values.logMetrics.serviceLabelFallback }}
             {{- end }}
           {{- if .Values.push.enabled }}
           volumeMounts:
