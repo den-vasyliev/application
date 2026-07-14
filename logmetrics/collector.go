@@ -129,7 +129,7 @@ func (o *Options) setDefaults() {
 // election so only one replica scrapes + sends.
 type Collector struct {
 	opts   Options
-	client client.Client
+	client client.Reader
 	sender Sender
 	log    logr.Logger
 
@@ -156,7 +156,7 @@ func New(opts Options, mgr manager.Manager, sender Sender, log logr.Logger) *Col
 	opts.setDefaults()
 	return &Collector{
 		opts:   opts,
-		client: mgr.GetClient(),
+		client: mgr.GetAPIReader(),
 		sender: sender,
 		log:    log.WithName("logmetrics"),
 		prev:   make(map[string]endpointCounters),
