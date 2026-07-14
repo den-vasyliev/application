@@ -205,6 +205,30 @@ func TestCollector_CounterReset(t *testing.T) {
 // TestCollector_GateBelowThresholdNoSend verifies a service whose error delta never
 // crosses the threshold produces no frame at all — not a frame with 0 services, no
 // frame.
+// TestCollector_SkipsEmptyServiceEntries verifies error series from pods without
+// any service label (service and fallback both empty) are excluded from the frame
+// even when they cross the threshold — the receiver rejects a whole frame over one
+// empty-service entry, and an unattributable service can't resolve in the hub's
+// graph anyway. Attributed services in the same window must still be sent.
+func TestCollector_SkipsEmptyServiceEntries(t *testing.T) {
+	body := `# HELP log_metric_counter_log_errors_total error log lines
+# TYPE log_metric_counter_log_errors_total counter
+log_metric_counter_log_errors_total{namespace="ops",service="api"} 25
+log_metric_counter_log_errors_total{namespace="ops",service="",service_fallback=""} 40
+`
+	ms := newMetricsServer(t, body)
+	c, sender := newTestCollector(t, []*metricsServer{ms}, Options{ErrorThreshold: 10})
+
+	c.runOnce(context.Background())
+	svcs := sender.allServices()
+	if len(svcs) != 1 {
+		t.Fatalf("services = %d, want 1 (empty-service entry must be skipped)", len(svcs))
+	}
+	if svcs[0].Service != "api" || svcs[0].ErrorCount != 25 {
+		t.Errorf("service = %+v, want api/25", svcs[0])
+	}
+}
+
 func TestCollector_GateBelowThresholdNoSend(t *testing.T) {
 	ms := newMetricsServer(t, fmt.Sprintf(promErrCounter, 3))
 	c, sender := newTestCollector(t, []*metricsServer{ms}, Options{ErrorThreshold: 10})

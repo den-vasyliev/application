@@ -220,10 +220,23 @@ func (c *Collector) runOnce(ctx context.Context) {
 	}
 
 	var qualifying []push.ServiceLogMetrics
+	unattributed := int64(0)
 	for _, m := range totals {
-		if m.ErrorCount >= c.opts.ErrorThreshold {
-			qualifying = append(qualifying, *m)
+		if m.ErrorCount < c.opts.ErrorThreshold {
+			continue
 		}
+		// Pods with neither service label leave Service empty. Skip them: the
+		// receiver rejects the whole frame over one empty entry, and an
+		// unattributable service could never resolve in the hub's graph anyway.
+		if m.Service == "" {
+			unattributed += m.ErrorCount
+			continue
+		}
+		qualifying = append(qualifying, *m)
+	}
+	if unattributed > 0 {
+		c.log.Info("skipped unattributable error logs (pods without a service label)",
+			"errorCount", unattributed)
 	}
 	if len(qualifying) == 0 {
 		c.log.V(1).Info("no services crossed the error threshold; no frame sent",
