@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -66,8 +67,10 @@ type Options struct {
 	ClusterName string // stamped into every frame (triage source segment)
 	Tenant      string // tenant this cluster belongs to; selects the triage service graph
 	// Token/TokenFile provide the HMAC signing key for the handshake (the value is the
-	// per-tenant key, not a bearer token). TokenFile takes precedence. The same value
-	// is also sent as a coarse pre-upgrade Bearer credential.
+	// per-tenant key, not a bearer token). TokenFile takes precedence. The raw key is
+	// never put on the wire: the pre-upgrade Authorization header carries a
+	// proof-of-possession signature (see runOnce), and the hello frame is signed the
+	// same way — the key itself only ever exists locally to compute HMACs with.
 	Token         string
 	TokenFile     string
 	Namespaces    []string      // namespaces to watch; empty = all
@@ -91,6 +94,11 @@ type Pusher struct {
 	// outbound queue of frames produced by informer handlers; drained by the writer.
 	mu    sync.Mutex
 	sendC chan *Frame
+
+	// droppedFrames counts frames dropped on this connection because sendC was full;
+	// reset to 0 per connection in runOnce alongside the fresh sendC. Read/written
+	// atomically since enqueue is called from informer handler goroutines.
+	droppedFrames atomic.Uint64
 
 	// listAppsFn sources the snapshot. Defaults to the cache; overridable in tests.
 	listAppsFn func(context.Context) ([]*appv1beta1.Application, error)
@@ -190,8 +198,29 @@ func (p *Pusher) runOnce(ctx context.Context) (connected bool, err error) {
 	if p.opts.InsecureTLS {
 		dialer = &websocket.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec
 	}
+
+	nowFn := p.opts.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	// One timestamp for both the pre-upgrade auth header and the hello frame, so the
+	// receiver can verify the header pre-upgrade using the exact same canonical string
+	// (tenant,cluster,ts) it uses to verify the hello, without a second clock read. The
+	// header is proof-of-possession only, NOT the authoritative auth decision — the hub
+	// must still verify the signed hello frame after upgrade; a header check is a cheap
+	// early reject, not a replacement.
+	//
+	// Receiver compatibility: this sends the signature (not the raw key) as the Bearer
+	// credential, plus tenant/cluster/ts headers. Until internal/remoteagent is updated
+	// to verify this new header form, it must ignore the Authorization header entirely
+	// rather than compare it to the raw key — comparing would reject every connection.
+	ts := nowFn().Unix()
+	sig := signHandshake([]byte(token), p.opts.Tenant, p.opts.ClusterName, ts)
 	hdr := http.Header{}
-	hdr.Set("Authorization", "Bearer "+token)
+	hdr.Set("Authorization", "Bearer "+sig)
+	hdr.Set("X-Triage-Tenant", p.opts.Tenant)
+	hdr.Set("X-Triage-Cluster", p.opts.ClusterName)
+	hdr.Set("X-Triage-Ts", strconv.FormatInt(ts, 10))
 
 	conn, _, err := dialer.DialContext(ctx, p.opts.Endpoint, hdr)
 	if err != nil {
@@ -200,6 +229,19 @@ func (p *Pusher) runOnce(ctx context.Context) (connected bool, err error) {
 	defer conn.Close()
 	connected = true
 
+	// A half-dead peer (network partition, silently killed process) is otherwise only
+	// detected once TCP send buffers fill, which can take a long time on a low-traffic
+	// stream. Prime a read deadline now and extend it on every pong / app-level read so
+	// a genuinely unresponsive peer trips it well before that. Deadlines are a real-clock
+	// concept the network layer enforces against actual wall-clock time, so unlike the
+	// HMAC timestamp above this deliberately uses time.Now(), not the injectable nowFn
+	// (which tests can point at an arbitrary instant).
+	readTimeout := 3 * p.opts.Heartbeat
+	_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(readTimeout))
+	})
+
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -207,6 +249,7 @@ func (p *Pusher) runOnce(ctx context.Context) (connected bool, err error) {
 	p.sendC = make(chan *Frame, 4096)
 	sendC := p.sendC
 	p.mu.Unlock()
+	p.droppedFrames.Store(0)
 
 	// Register informer handlers scoped to this connection.
 	if !p.skipHandlers {
@@ -219,16 +262,14 @@ func (p *Pusher) runOnce(ctx context.Context) (connected bool, err error) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() { defer wg.Done(); p.readLoop(connCtx, cancel, conn) }()
+	go func() { defer wg.Done(); p.readLoop(connCtx, cancel, conn, readTimeout) }()
 
 	// Hello + snapshot before streaming deltas. The hello is HMAC-signed with the
-	// resolved key over (tenant,cluster,now) so the receiver can verify + route.
-	nowFn := p.opts.now
-	if nowFn == nil {
-		nowFn = time.Now
-	}
+	// resolved key over (tenant,cluster,ts) — the same ts sent in the auth header above —
+	// so the receiver can verify + route. Hello-frame verification remains the
+	// authoritative auth check; the header is only a pre-upgrade hint.
 	hello := newHello(p.opts.ClusterName, p.opts.Tenant, p.opts.AgentVersion,
-		[]byte(token), nowFn().Unix(), p.opts.Namespaces)
+		[]byte(token), ts, p.opts.Namespaces)
 	if err := p.writeFrame(conn, hello); err != nil {
 		cancel()
 		wg.Wait()
@@ -276,7 +317,11 @@ func (p *Pusher) writeLoop(ctx context.Context, conn *websocket.Conn, sendC chan
 // readLoop consumes hub→agent frames (pong). Any read error ends the connection.
 // If the hub closed with a policy-violation code (auth rejection), it records that
 // so the reconnect loop backs off hard instead of hammering with a bad token.
-func (p *Pusher) readLoop(_ context.Context, cancel context.CancelFunc, conn *websocket.Conn) {
+//
+// Every successful read extends the read deadline by readTimeout: the hub sends
+// app-level pong text frames (not just WebSocket pong control frames), and either one
+// is proof the peer is alive, so both must push the deadline out.
+func (p *Pusher) readLoop(_ context.Context, cancel context.CancelFunc, conn *websocket.Conn, readTimeout time.Duration) {
 	defer cancel()
 	for {
 		_, data, err := conn.ReadMessage()
@@ -287,6 +332,7 @@ func (p *Pusher) readLoop(_ context.Context, cancel context.CancelFunc, conn *we
 			}
 			return
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
 		if _, err := decode(data); err != nil {
 			p.log.V(2).Info("ignoring undecodable hub frame")
 		}
@@ -427,8 +473,11 @@ func (p *Pusher) inScope(ns string) bool {
 	return false
 }
 
-// enqueue offers a frame to the current connection's send channel, dropping (with a
-// warn) if the socket is backed up — never blocking an informer handler.
+// enqueue offers a frame to the current connection's send channel, dropping if the
+// socket is backed up — never blocking an informer handler. A backed-up socket can
+// drop many frames per second; logging every one of them would flood the log right
+// when the log is most needed for something else, so we log only the first drop on
+// this connection and every 1000th after that, each line carrying the running count.
 func (p *Pusher) enqueue(f *Frame) {
 	p.mu.Lock()
 	sendC := p.sendC
@@ -439,7 +488,10 @@ func (p *Pusher) enqueue(f *Frame) {
 	select {
 	case sendC <- f:
 	default:
-		p.log.Info("send queue full; dropping frame", "kind", f.Kind)
+		n := p.droppedFrames.Add(1)
+		if n == 1 || n%1000 == 0 {
+			p.log.Info("send queue full; dropping frame", "kind", f.Kind, "droppedOnConnection", n)
+		}
 	}
 }
 

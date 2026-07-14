@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,9 +19,12 @@ import (
 
 // fakeHub is a WS server that records received frames and can send a pong.
 type fakeHub struct {
-	mu     sync.Mutex
-	frames []*Frame
-	gotTok string
+	mu         sync.Mutex
+	frames     []*Frame
+	gotTok     string
+	gotTenant  string
+	gotCluster string
+	gotTs      string
 }
 
 func (h *fakeHub) record(f *Frame) {
@@ -47,6 +51,9 @@ func newFakeHub(t *testing.T) (*fakeHub, *httptest.Server) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()
 		h.gotTok = r.Header.Get("Authorization")
+		h.gotTenant = r.Header.Get("X-Triage-Tenant")
+		h.gotCluster = r.Header.Get("X-Triage-Cluster")
+		h.gotTs = r.Header.Get("X-Triage-Ts")
 		h.mu.Unlock()
 		conn, err := testUpgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -78,9 +85,11 @@ func newTestPusher(endpoint string, apps []*appv1beta1.Application) *Pusher {
 		opts: Options{
 			Endpoint:      endpoint,
 			ClusterName:   "owl",
+			Tenant:        "newron",
 			Token:         "tok",
 			Heartbeat:     150 * time.Millisecond,
 			SnapshotChunk: 50,
+			now:           func() time.Time { return time.Unix(1720000000, 0) },
 		},
 		log:          logr.Discard(),
 		skipHandlers: true,
@@ -107,8 +116,9 @@ func wsURL(srv *httptest.Server) string {
 }
 
 // TestPusher_HelloSnapshotHeartbeat drives one connection and asserts the frame
-// sequence the receiver expects: hello → snapshot → snapshot_end → heartbeat,
-// with the Bearer token on the upgrade.
+// sequence the receiver expects: hello → snapshot → snapshot_end → heartbeat, with a
+// proof-of-possession signature (not the raw key) plus tenant/cluster/ts headers on
+// the upgrade.
 func TestPusher_HelloSnapshotHeartbeat(t *testing.T) {
 	hub, srv := newFakeHub(t)
 	p := newTestPusher(wsURL(srv), []*appv1beta1.Application{mkApp("api", true), mkApp("web", false)})
@@ -121,7 +131,7 @@ func TestPusher_HelloSnapshotHeartbeat(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		k := hub.kinds()
-		if len(k) >= 4 && contains(k, KindHeartbeat) {
+		if len(k) >= 4 && slices.Contains(k, KindHeartbeat) {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -132,14 +142,28 @@ func TestPusher_HelloSnapshotHeartbeat(t *testing.T) {
 	if len(k) < 3 || k[0] != KindHello || k[1] != KindSnapshot || k[2] != KindSnapshotEnd {
 		t.Fatalf("frame sequence = %v, want hello, snapshot, snapshot_end, ...", k)
 	}
-	if !contains(k, KindHeartbeat) {
+	if !slices.Contains(k, KindHeartbeat) {
 		t.Errorf("no heartbeat sent; frames = %v", k)
 	}
 	hub.mu.Lock()
-	tok := hub.gotTok
+	tok, tenant, cluster, ts := hub.gotTok, hub.gotTenant, hub.gotCluster, hub.gotTs
 	hub.mu.Unlock()
-	if tok != "Bearer tok" {
-		t.Errorf("auth header = %q, want 'Bearer tok'", tok)
+
+	wantSig := signHandshake([]byte("tok"), "newron", "owl", 1720000000)
+	if tok != "Bearer "+wantSig {
+		t.Errorf("auth header = %q, want %q", tok, "Bearer "+wantSig)
+	}
+	if tok == "Bearer tok" {
+		t.Errorf("auth header carries the raw HMAC key instead of a signature: %q", tok)
+	}
+	if tenant != "newron" {
+		t.Errorf("X-Triage-Tenant = %q, want %q", tenant, "newron")
+	}
+	if cluster != "owl" {
+		t.Errorf("X-Triage-Cluster = %q, want %q", cluster, "owl")
+	}
+	if ts != "1720000000" {
+		t.Errorf("X-Triage-Ts = %q, want %q", ts, "1720000000")
 	}
 }
 
@@ -155,7 +179,7 @@ func TestPusher_DeltaEnqueued(t *testing.T) {
 	// Wait for the connection to establish (snapshot_end seen), then enqueue a delta.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if contains(hub.kinds(), KindSnapshotEnd) {
+		if slices.Contains(hub.kinds(), KindSnapshotEnd) {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -164,7 +188,7 @@ func TestPusher_DeltaEnqueued(t *testing.T) {
 
 	deadline = time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if contains(hub.kinds(), KindAppDelta) {
+		if slices.Contains(hub.kinds(), KindAppDelta) {
 			cancel()
 			return
 		}
@@ -223,13 +247,4 @@ func TestParseNamespaces(t *testing.T) {
 			}
 		}
 	}
-}
-
-func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
