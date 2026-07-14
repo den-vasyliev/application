@@ -62,27 +62,27 @@ all: generate fix vet fmt manifests test lint misspell tidy bin/app-controller #
 ## --------------------------------------
 
 $(TOOLBIN)/controller-gen: $(TOOLBIN)/kubectl
-	GOBIN=$(TOOLBIN) GO111MODULE=on go get sigs.k8s.io/controller-tools/cmd/controller-gen@v0.4.0
+	GOBIN=$(TOOLBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.4.0
 
 $(TOOLBIN)/golangci-lint:
-	GOBIN=$(TOOLBIN) GO111MODULE=on go get github.com/golangci/golangci-lint/cmd/golangci-lint@v1.23.6
+	GOBIN=$(TOOLBIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.23.6
 
 $(TOOLBIN)/mockgen:
-	GOBIN=$(TOOLBIN) GO111MODULE=on go get github.com/golang/mock/mockgen@v1.3.1
+	GOBIN=$(TOOLBIN) go install github.com/golang/mock/mockgen@v1.3.1
 
 $(TOOLBIN)/conversion-gen:
-	GOBIN=$(TOOLBIN) GO111MODULE=on go get k8s.io/code-generator/cmd/conversion-gen@v0.18.9
+	GOBIN=$(TOOLBIN) go install k8s.io/code-generator/cmd/conversion-gen@v0.18.9
 
 $(TOOLBIN)/kubebuilder $(TOOLBIN)/etcd $(TOOLBIN)/kube-apiserver $(TOOLBIN)/kubectl:
 	cd $(TOOLS_DIR); ./install_kubebuilder.sh
 	cp $(TOOLBIN)/kubectl $(HOME)/bin
 
 $(TOOLBIN)/kind:
-	GOBIN=$(TOOLBIN) GO111MODULE=on go get sigs.k8s.io/kind@v0.9.0
+	GOBIN=$(TOOLBIN) go install sigs.k8s.io/kind@v0.9.0
 
 
 $(TOOLBIN)/misspell:
-	GOBIN=$(TOOLBIN) GO111MODULE=on go get github.com/client9/misspell/cmd/misspell@v0.3.4
+	GOBIN=$(TOOLBIN) go install github.com/client9/misspell/cmd/misspell@v0.3.4
 
 .PHONY: install-tools
 install-tools: ## Install all tool binaries into hack/tools/bin
