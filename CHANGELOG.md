@@ -6,6 +6,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-07-14
+
+### Fixed
+
+- **Status computation no longer panics on sparse CRD conditions.**
+  `getConditionOfType` cast `reason`/`status` with unchecked type assertions;
+  a condition of type `Ready` without a `reason` field (it is `omitempty` in
+  many schemas, including `appsv1.DeploymentCondition`) panicked the
+  reconciler and crash-looped the controller. The function runs for **every
+  component kind without a dedicated handler** via
+  `statusFromStandardConditions`, so any custom resource could trigger it.
+  Now uses comma-ok assertions; the unused `reason` return was dropped.
+- **`deploymentStatus` no longer dereferences a nil `spec.replicas`** — it
+  defaults to 1 like every other workload handler.
+- **`spec.selector.matchExpressions` are honored when listing components.**
+  Component listing used `client.MatchingLabels(selector.MatchLabels)`, which
+  ignored `matchExpressions` entirely — an Application with a
+  matchExpressions-only selector produced an empty label filter and claimed
+  **every resource of each declared GVK in the namespace**. Listing now goes
+  through `metav1.LabelSelectorAsSelector` (full selector semantics), matching
+  what the dynamic-watch fan-out (`applicationsForComponent`) already did.
+- **Hostname-only LoadBalancer ingress counts as provisioned.** AWS ELB/NLB
+  populate `status.loadBalancer.ingress[].hostname` and leave `ip` empty;
+  such Services were reported `InProgress` forever. An ingress entry now
+  counts with either an IP or a hostname, and the mixed `||`/`&&` readiness
+  expression was rewritten as explicit branches.
+- **Application deleted mid-reconcile no longer surfaces as an error.** The
+  status write treats `IsNotFound` as a no-op (common on churny namespaces
+  with short-lived preview environments).
+
+### Security
+
+- **The push agent no longer sends its raw HMAC signing key over the wire.**
+  The pre-upgrade `Authorization: Bearer` credential used to be the per-tenant
+  key itself; it is now the handshake **signature** (HMAC-SHA256 over
+  tenant/cluster/timestamp) accompanied by `X-Triage-Tenant`/`X-Triage-Cluster`/
+  `X-Triage-Ts` headers, so the receiver can still verify pre-upgrade but the
+  long-lived key never travels. Hello-frame verification remains the
+  authoritative auth. The triage receiver ignores the Authorization header
+  (hello-HMAC is its sole auth), so old and new agent/receiver combinations
+  interoperate; receivers ≥ the paired `remoteagent` patch additionally verify
+  the new headers pre-upgrade and reject mis-keyed clients with 401 before the
+  WebSocket upgrade.
+- Stale kubebuilder RBAC marker trimmed from `update;patch;watch` on `*/*` to
+  read-only `get;list;watch`, matching the chart's ClusterRole (leftover from
+  the removed owner-reference writing).
+
+### Changed
+
+- **Component reads are now served from the informer cache.** controller-runtime's
+  default client bypasses the cache for unstructured reads, so every reconcile
+  issued live `LIST` calls to the API server for each component GVK — while the
+  dynamic component watches maintained informers whose data was never read.
+  `client.CacheOptions.Unstructured: true` routes those reads through the cache.
+  Trade-off: listing a non-workload kind (Secret/ConfigMap) now starts a
+  cluster-wide informer for it; `TransformStripManagedFields` (below) offsets
+  the memory cost.
+- `managedFields` are stripped from every cached object
+  (`cache.DefaultTransform`), typically cutting informer memory 30–40%.
+- New `--concurrent-reconciles` flag (default 4); reconciles of distinct
+  Applications run in parallel instead of serializing on one worker.
+- In push mode the Event informer is scoped server-side to `type=Warning`
+  (field selector) instead of caching every Event cluster-wide.
+- Push connection robustness: read deadline + pong handler detect half-dead
+  connections; the send-queue drop log is rate-limited to the first and every
+  1000th drop per connection.
+- **Toolchain: controller-runtime v0.19.3 → v0.24.1, k8s.io/* v0.31.3 →
+  v0.36.0, Go 1.25 → 1.26.** No API changes required; CI follows via
+  `go-version-file`. Makefile tool installs switched from legacy
+  `GO111MODULE=on go get` (which mutates go.mod under modern Go — a
+  `make generate` run downgraded controller-runtime to v0.6.5) to `go install`.
+
+### Removed
+
+- Dead code: `setOwnerRefForResources` (owner-ref writing was disabled long
+  ago), the `StatusDisabled` constant, the reconciler's unused `Scheme` field,
+  and `ObjectStatus.Link` population (`selfLink` was removed in Kubernetes
+  1.24, so the value was always empty; the API field remains).
+
+## [1.4.4] - 2026-07-13
+
+### Fixed
+
+- **Push mode: widened the outbound frame buffer (256 → 4096) to absorb
+  reconnect resync bursts.** A reconnect replays the full informer cache
+  before streaming live deltas, which can briefly emit thousands of frames on
+  clusters with large event volume; the 256-slot buffer filled and dropped
+  most of that backlog on `preview` (619 apps).
+
 ## [1.4.3] - 2026-07-12
 
 ### Fixed
