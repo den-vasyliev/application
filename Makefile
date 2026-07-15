@@ -23,7 +23,7 @@ IMAGE_NAME = app-controller
 # Registry the local `make docker-build`/`make docker-push` targets tag against.
 # Defaults to GHCR (same as KO_DOCKER_REPO / CI). The Helm chart pulls from the ops
 # Artifact Registry; images land there via `crane copy` (see MEMORY / release docs).
-REGISTRY ?= ghcr.io/den-vasyliev
+REGISTRY ?= ghcr.io/niq-enterprise
 
 ifeq ($(ARCH), amd64)
 IMAGE_TAG ?= $(VER)
@@ -243,7 +243,7 @@ docker-push: ## Push the docker image
 ## ko
 ## --------------------------------------
 
-KO_DOCKER_REPO ?= ghcr.io/den-vasyliev/application
+KO_DOCKER_REPO ?= ghcr.io/niq-enterprise/symbio-application-controller
 
 .PHONY: ko-image
 ko-image: ## Build container image locally using ko

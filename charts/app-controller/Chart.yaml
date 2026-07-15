@@ -14,8 +14,8 @@ keywords:
   - app.k8s.io
   - triage
   - push
-home: https://github.com/den-vasyliev/application
+home: https://github.com/niq-enterprise/symbio-application-controller
 sources:
-  - https://github.com/den-vasyliev/application
+  - https://github.com/niq-enterprise/symbio-application-controller
 maintainers:
   - name: den-vasyliev
