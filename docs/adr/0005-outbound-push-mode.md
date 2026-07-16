@@ -1,10 +1,19 @@
 # ADR-0005: Outbound Push Mode (stream Applications + events to triage)
 
-- **Status:** Proposed
+- **Status:** Implemented (auth superseded — see note below)
 - **Date:** 2026-07-09
 - **Deciders:** Denis (Principal SRE)
 - **Related:** ADR-0004 (dynamic component watches); triage-agent ADR-029
   (remote-agent WS event source — the receiving end)
+
+> **Note (2026-07-14):** the plain bearer-token auth described below was
+> replaced by a per-tenant HMAC handshake — see CHANGELOG "BREAKING (push
+> mode)" entry. `--push-token`/`--push-token-file` (`push.token` in the chart)
+> now carry the HMAC **signing key**, never sent on the wire, and a new
+> `--tenant` / `push.tenant` flag is required whenever push mode is enabled.
+> The wire protocol, frame kinds, and reconnect/backoff behavior below are
+> otherwise unchanged. See `docs/quickstart.md` and the top-level README for
+> current usage.
 
 ## Context
 

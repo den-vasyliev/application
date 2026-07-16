@@ -16,7 +16,7 @@ It:
 ## Install
 
 ```bash
-helm install app charts/app-controller -n application-system --create-namespace
+helm install app charts/app-controller -n triage --create-namespace
 ```
 
 ## Use
@@ -64,18 +64,34 @@ Application to `InProgress`. Scaled to zero (`spec.replicas: 0`) is Ready.
 
 When a cluster's API is not reachable from where you monitor it (behind a firewall
 or NAT), the controller can dial **out** to a WebSocket endpoint and stream its
-Applications, status changes, and Kubernetes Warning events to it.
+Applications, status changes, and Kubernetes Warning events to a triage agent
+(remote-agent mode, [ADR-0005](docs/adr/0005-outbound-push-mode.md)).
+
+Auth is HMAC-based, not a bearer token: `push.token` is a per-tenant **signing
+key** that never goes on the wire — the agent uses it to sign a handshake over
+`(tenant, clusterName, timestamp)`, and the triage receiver verifies the
+signature with its copy of the same key. `push.tenant` is required alongside
+`push.clusterName` whenever push mode is enabled.
 
 ```bash
-helm upgrade --install app charts/app-controller -n application-system \
+helm upgrade --install app charts/app-controller -n triage \
   --set push.enabled=true \
-  --set push.endpoint=wss://<host>/events/ws \
+  --set push.endpoint=wss://<host>/v1/cluster-agent/ws \
   --set push.clusterName=<cluster> \
-  --set push.token=<bearer-token>
+  --set push.tenant=<tenant> \
+  --set push.token=<hmac-signing-key>
 ```
 
-See the chart [values](charts/app-controller/values.yaml) for the full set of push
-options.
+The signing key must be registered on the triage receiver under the exact same
+`clusterName` before the handshake will succeed, or the connection is rejected
+with "unknown cluster". Generate it with `openssl rand -base64 32`; prefer
+`push.existingSecret` (a pre-created Secret with a `token` key) over the inline
+`push.token` value for anything beyond local testing.
+
+See the chart [values](charts/app-controller/values.yaml) and
+[README](charts/app-controller/README.md) for the full set of push options,
+including the optional log-based metrics forwarder
+([ADR-0006](docs/adr/0006-log-based-metrics.md)) that rides the same connection.
 
 ## Development
 

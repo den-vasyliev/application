@@ -11,7 +11,7 @@ kubebuilder-scaffold extras. Enable metrics explicitly if you scrape them.
 ## Install
 
 ```bash
-helm install app charts/app-controller -n application-system --create-namespace
+helm install app charts/app-controller -n triage --create-namespace
 ```
 
 The Application CRD ships in `crds/` and is installed automatically on first
@@ -20,12 +20,13 @@ install. (Helm does not upgrade CRDs — apply CRD changes manually.)
 ## Push mode
 
 ```bash
-helm upgrade --install app charts/app-controller -n application-system \
+helm upgrade --install app charts/app-controller -n triage \
   --set push.enabled=true \
   --set push.endpoint=wss://triage.example.com/v1/cluster-agent/ws \
   --set push.clusterName=ops \
   --set push.namespaces=ops \
-  --set push.token=<bearer-token>
+  --set push.tenant=ops \
+  --set push.token=<hmac-signing-key>
 ```
 
 Or reference an existing Secret (key `token`):
@@ -44,7 +45,7 @@ triage as `log_metrics` frames over the same push connection — see
 [ADR-0006](../../docs/adr/0006-log-based-metrics.md). Requires `push.enabled=true`.
 
 ```bash
-helm upgrade --install app charts/app-controller -n application-system --reuse-values \
+helm upgrade --install app charts/app-controller -n triage --reuse-values \
   --set fluentbit.enabled=true \
   --set logMetrics.enabled=true
 ```
@@ -69,11 +70,12 @@ at its existing exporter Service.
 | `push.enabled` | `false` | Enable push mode |
 | `push.endpoint` | `""` | Triage WebSocket URL (required when enabled) |
 | `push.clusterName` | `""` | Cluster name stamped into events (required when enabled) |
+| `push.tenant` | `""` | Tenant selecting the triage service graph; bound into the signed handshake (required when enabled) |
 | `push.namespaces` | `""` | Comma-separated namespaces; empty = all |
 | `push.heartbeatSeconds` | `20` | Heartbeat interval |
 | `push.insecureSkipVerify` | `false` | Skip TLS cert verify for `wss://` (dev only) |
 | `push.allowPlaintext` | `false` | Allow plaintext `ws://` endpoint (token unencrypted) |
-| `push.existingSecret` | `""` | Secret (key `token`) holding the bearer token |
+| `push.existingSecret` | `""` | Secret (key `token`) holding the HMAC signing key |
 | `push.token` | `""` | Inline token (rendered into a Secret) |
 | `logMetrics.enabled` | `false` | Enable the log-metrics collector (requires `push.enabled`) |
 | `logMetrics.serviceName` | `triage-fluentbit` | Service fronting the Fluent Bit exporter pods |

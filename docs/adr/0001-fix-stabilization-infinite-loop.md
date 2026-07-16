@@ -71,5 +71,5 @@ crane copy ghcr.io/den-vasyliev/application:6006345 \
 
 kubectl set image deployment/kube-app-manager-controller \
   kube-app-manager=REGISTRY/application:6006345 \
-  -n application-system
+  -n triage
 ```

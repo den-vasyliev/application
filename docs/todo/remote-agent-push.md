@@ -1,6 +1,9 @@
 # TODO: Outbound Push Mode (application controller / agent side)
 
-**Status:** Planned
+**Status:** Implemented and shipped (auth reworked to per-tenant HMAC post-launch —
+see the note in [ADR-0005](../adr/0005-outbound-push-mode.md) and the CHANGELOG).
+The step-by-step plan below is kept for history; for current usage see the
+top-level README and `docs/quickstart.md`.
 **ADR:** [ADR-0005](../adr/0005-outbound-push-mode.md)
 **Companion (hub side):** triage-agent → `docs/todo/remote-agent-ws-source.md` (ADR-029)
 
