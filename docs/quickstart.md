@@ -51,12 +51,15 @@ helm upgrade --install app charts/app-controller -n triage \
   --set push.endpoint=wss://<host>/v1/cluster-agent/ws \
   --set push.clusterName=<cluster> \
   --set push.tenant=<tenant> \
+  --set push.namespaces=<ns1>\,<ns2> \
   --set push.token=<hmac-signing-key>   # openssl rand -base64 32
 ```
 
 `push.clusterName` and `push.tenant` are both required once `push.enabled` is
-true. Prefer `push.existingSecret` (a Secret with a `token` key) over the
-inline `push.token` outside of local testing. Full option list in the
+true. `push.namespaces` scopes which namespaces get pushed — empty pushes
+**all** namespaces, so set it explicitly unless that's intended. Prefer
+`push.existingSecret` (a Secret with a `token` key) over the inline
+`push.token` outside of local testing. Full option list in the
 [chart README](../charts/app-controller/README.md#push-mode) and
 [values.yaml](../charts/app-controller/values.yaml).
 

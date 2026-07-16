@@ -79,8 +79,13 @@ helm upgrade --install app charts/app-controller -n triage \
   --set push.endpoint=wss://<host>/v1/cluster-agent/ws \
   --set push.clusterName=<cluster> \
   --set push.tenant=<tenant> \
+  --set push.namespaces=<ns1>\,<ns2> \
   --set push.token=<hmac-signing-key>
 ```
+
+`push.namespaces` scopes which namespaces' Applications and Warning events get
+pushed; leaving it empty pushes **all** namespaces, so set it explicitly unless
+that's what you want.
 
 The signing key must be registered on the triage receiver under the exact same
 `clusterName` before the handshake will succeed, or the connection is rejected
