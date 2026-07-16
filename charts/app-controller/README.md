@@ -64,6 +64,7 @@ at its existing exporter Service.
 | `namespace` | `""` | Restrict cache to one namespace; empty = cluster-wide |
 | `syncPeriod` | `120` | Reconcile resync seconds |
 | `stabilizationPeriod` | `30` | Anti-flap delay before Ready |
+| `concurrentReconciles` | `4` | Max Applications reconciled in parallel |
 | `leaderElection.enabled` | `false` | Enable leader election (needs >1 replica) |
 | `metrics.enabled` | `false` | Serve the metrics endpoint |
 | `metrics.bindAddress` | `127.0.0.1:8080` | Metrics bind address when enabled |

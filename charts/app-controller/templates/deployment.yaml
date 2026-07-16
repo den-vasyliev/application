@@ -39,6 +39,7 @@ spec:
             {{- end }}
             - --sync-period={{ .Values.syncPeriod }}
             - --stabilization-period={{ .Values.stabilizationPeriod }}
+            - --concurrent-reconciles={{ .Values.concurrentReconciles }}
             {{- if .Values.logLevel }}
             - --zap-log-level={{ .Values.logLevel }}
             {{- end }}

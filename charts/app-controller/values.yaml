@@ -21,6 +21,8 @@ logLevel: ""
 syncPeriod: 120
 # Seconds to wait before transitioning an Application to Ready (anti-flap).
 stabilizationPeriod: 30
+# Maximum number of Applications reconciled in parallel.
+concurrentReconciles: 4
 
 # Leader election. Only needed when running more than one replica.
 leaderElection:
