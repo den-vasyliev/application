@@ -1,10 +1,17 @@
 # ADR-0006: Log-Based Metrics (Fluent Bit → agent scrape/gate → log_metrics frame)
 
-- **Status:** Proposed
+- **Status:** Implemented (gate widened — see note below)
 - **Date:** 2026-07-14
 - **Deciders:** Denis (Principal SRE)
 - **Related:** ADR-0005 (outbound push mode — the transport this rides on); triage-agent
   ADR-029 (remote-agent WS receiver)
+
+> **Note (2026-07-16):** the gate originally described below (error count only) was
+> widened to `errorCount >= errorThreshold OR warnCount >= errorThreshold` — either
+> counter independently qualifies a service, reusing the same threshold for both. A
+> warn-heavy service with zero errors previously never crossed the gate even though
+> `WarnCount` was already being scraped and shipped whenever a frame *did* go out; now
+> it can trigger one on its own. See `logmetrics/collector.go`'s qualifying loop.
 
 ## Context
 

@@ -66,9 +66,10 @@ push:
 
 # Log-based metrics (ADR-0006): scrape a Fluent Bit DaemonSet's Prometheus exporter,
 # aggregate error/warn/total log-line counters per (namespace, service), and forward
-# services whose error delta crosses errorThreshold as log_metrics frames over the
-# push WebSocket above. Off by default. Requires push.enabled=true (there is nowhere
-# else to send the frames); the chart fails the render otherwise.
+# services whose error delta OR warn delta crosses errorThreshold (either counter
+# independently qualifies) as log_metrics frames over the push WebSocket above. Off
+# by default. Requires push.enabled=true (there is nowhere else to send the frames);
+# the chart fails the render otherwise.
 #
 # fluentbit.* below deploys the DaemonSet that produces these metrics. It is
 # independent of this block so a fleet can run its own Fluent Bit and just point
@@ -84,7 +85,8 @@ logMetrics:
   port: 2021
   # Scrape + gate-evaluation interval in seconds.
   intervalSeconds: 60
-  # Minimum error-count delta in one interval for a service to be reported.
+  # Minimum error-count OR warn-count delta in one interval for a service to be
+  # reported — either counter crossing this independently qualifies the service.
   errorThreshold: 10
   # Prometheus counter family names as emitted by Fluent Bit's log_to_metrics filter
   # (metric_namespace "log_metric" + metric_mode "counter" produces the

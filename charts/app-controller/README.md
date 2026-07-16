@@ -40,8 +40,9 @@ Or reference an existing Secret (key `token`):
 Ships a `triage-fluentbit` DaemonSet that tails container logs, counts error/warn
 lines per (namespace, service) via Fluent Bit's `log_to_metrics` filter, and exposes
 them as Prometheus counters. The controller scrapes that DaemonSet's pods, computes
-per-interval deltas, and forwards services whose error delta crosses a threshold to
-triage as `log_metrics` frames over the same push connection — see
+per-interval deltas, and forwards services whose error delta OR warn delta crosses
+`errorThreshold` (either counter independently qualifies) to triage as `log_metrics`
+frames over the same push connection — see
 [ADR-0006](../../docs/adr/0006-log-based-metrics.md). Requires `push.enabled=true`.
 
 ```bash
@@ -82,7 +83,7 @@ at its existing exporter Service.
 | `logMetrics.serviceName` | `triage-fluentbit` | Service fronting the Fluent Bit exporter pods |
 | `logMetrics.port` | `2021` | Fluent Bit `prometheus_exporter` port |
 | `logMetrics.intervalSeconds` | `60` | Scrape + gate-evaluation interval |
-| `logMetrics.errorThreshold` | `10` | Minimum error-count delta per interval to report a service |
+| `logMetrics.errorThreshold` | `10` | Minimum error-count OR warn-count delta per interval to report a service (either counter independently qualifies) |
 | `logMetrics.errorMetric` / `warnMetric` / `totalMetric` | `log_metric_counter_log_{errors,warns,lines}_total` | Prometheus counter family names Fluent Bit emits |
 | `logMetrics.namespaceLabel` / `serviceLabel` / `serviceLabelFallback` | `namespace` / `service` / `service_fallback` | Label keys identifying each sample |
 | `fluentbit.enabled` | `false` | Deploy the `triage-fluentbit` DaemonSet + ConfigMap + Service + RBAC |

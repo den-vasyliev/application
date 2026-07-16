@@ -4,8 +4,8 @@
 // pod's Prometheus text-format /metrics, sums error/warn/total log-line counters per
 // (namespace, service) label pair, computes a delta against the previous scrape, and
 // sends a log_metrics frame (push/protocol.go) through the existing Pusher for
-// services whose error delta trips a threshold. Off by default; a no-op when push
-// mode itself is disabled, since the frame has nowhere to go.
+// services whose error or warn delta trips a threshold. Off by default; a no-op
+// when push mode itself is disabled, since the frame has nowhere to go.
 package logmetrics
 
 import (
@@ -52,8 +52,9 @@ type Options struct {
 	Interval time.Duration
 	// ScrapeTimeout bounds each per-pod HTTP GET. Default 5s.
 	ScrapeTimeout time.Duration
-	// ErrorThreshold is the minimum errorDelta for a service to qualify for the
-	// frame. Default 10.
+	// ErrorThreshold is the minimum errorDelta OR warnDelta for a service to
+	// qualify for the frame — either counter crossing it independently qualifies.
+	// Default 10.
 	ErrorThreshold int64
 	// Metric family names as emitted by Fluent Bit's log_to_metrics filter — these
 	// default to the *_counter_* names produced by metric_namespace=log_metric,
@@ -222,24 +223,28 @@ func (c *Collector) runOnce(ctx context.Context) {
 	var qualifying []push.ServiceLogMetrics
 	unattributed := int64(0)
 	for _, m := range totals {
-		if m.ErrorCount < c.opts.ErrorThreshold {
+		// A service qualifies on either counter crossing the threshold — error and
+		// warn are independent, mutually-exclusive log-line classifications (see
+		// fluentbit.pipeline.errorRegex/warnRegex), and a warn-heavy service is just
+		// as worth surfacing as an error-heavy one.
+		if m.ErrorCount < c.opts.ErrorThreshold && m.WarnCount < c.opts.ErrorThreshold {
 			continue
 		}
 		// Pods with neither service label leave Service empty. Skip them: the
 		// receiver rejects the whole frame over one empty entry, and an
 		// unattributable service could never resolve in the hub's graph anyway.
 		if m.Service == "" {
-			unattributed += m.ErrorCount
+			unattributed += m.ErrorCount + m.WarnCount
 			continue
 		}
 		qualifying = append(qualifying, *m)
 	}
 	if unattributed > 0 {
-		c.log.Info("skipped unattributable error logs (pods without a service label)",
-			"errorCount", unattributed)
+		c.log.Info("skipped unattributable error/warn logs (pods without a service label)",
+			"count", unattributed)
 	}
 	if len(qualifying) == 0 {
-		c.log.V(1).Info("no services crossed the error threshold; no frame sent",
+		c.log.V(1).Info("no services crossed the error/warn threshold; no frame sent",
 			"threshold", c.opts.ErrorThreshold, "servicesScraped", len(totals))
 		return
 	}

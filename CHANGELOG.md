@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Log-based metrics gate now qualifies a service on error OR warn count,
+  not error count alone.** `logMetrics.errorThreshold` (default 10) is
+  compared against both `ErrorCount` and `WarnCount` independently — a
+  service with 0 errors but a warn-count spike now triggers a `log_metrics`
+  frame on its own, whereas previously `WarnCount` was scraped and shipped
+  but never gated on anything. See [ADR-0006](docs/adr/0006-log-based-metrics.md).
+
 ## [1.4.5] - 2026-07-14
 
 ### Fixed

@@ -89,7 +89,7 @@ func main() {
 	flag.StringVar(&logMetricsServiceName, "log-metrics-service-name", "triage-fluentbit", "Name of the Service fronting the Fluent Bit DaemonSet.")
 	flag.IntVar(&logMetricsPort, "log-metrics-port", 2021, "Fluent Bit prometheus_exporter port on each pod.")
 	flag.Int64Var(&logMetricsIntervalSeconds, "log-metrics-interval-seconds", 60, "Scrape + gate-evaluation interval in seconds.")
-	flag.Int64Var(&logMetricsErrorThreshold, "log-metrics-error-threshold", 10, "Minimum error-count delta in one interval for a service to be reported.")
+	flag.Int64Var(&logMetricsErrorThreshold, "log-metrics-error-threshold", 10, "Minimum error-count OR warn-count delta in one interval for a service to be reported (either counter crossing it independently qualifies).")
 	flag.StringVar(&logMetricsErrorMetric, "log-metrics-error-metric", "log_metric_counter_log_errors_total", "Prometheus counter family name for error log lines, as emitted by Fluent Bit.")
 	flag.StringVar(&logMetricsWarnMetric, "log-metrics-warn-metric", "log_metric_counter_log_warns_total", "Prometheus counter family name for warn log lines. Empty disables warn reporting.")
 	flag.StringVar(&logMetricsTotalMetric, "log-metrics-total-metric", "log_metric_counter_log_lines_total", "Prometheus counter family name for all log lines. Empty disables total reporting.")

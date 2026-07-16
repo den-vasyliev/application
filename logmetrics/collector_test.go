@@ -239,6 +239,23 @@ func TestCollector_GateBelowThresholdNoSend(t *testing.T) {
 	}
 }
 
+// TestCollector_WarnAloneCrossesGate verifies a service with WarnCount >=
+// ErrorThreshold qualifies even when ErrorCount is well under it — the gate is an
+// OR across both counters, not error-only.
+func TestCollector_WarnAloneCrossesGate(t *testing.T) {
+	ms := newMetricsServer(t, fmt.Sprintf(promErrWarnTotal, 2, 15, 500))
+	c, sender := newTestCollector(t, []*metricsServer{ms}, Options{ErrorThreshold: 10})
+
+	c.runOnce(context.Background())
+	svcs := sender.allServices()
+	if len(svcs) != 1 {
+		t.Fatalf("services = %d, want 1 (warnCount=15 >= threshold=10 should qualify despite errorCount=2)", len(svcs))
+	}
+	if svcs[0].ErrorCount != 2 || svcs[0].WarnCount != 15 {
+		t.Errorf("service = %+v, want errorCount=2 warnCount=15", svcs[0])
+	}
+}
+
 // TestCollector_WarnAndTotalOptional verifies warn/total counters are aggregated
 // alongside errors when present, and that an absent family (warn/total metric name
 // not in the scrape) does not error — it's simply zero.
